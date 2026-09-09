@@ -1,0 +1,18 @@
+@"
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Backend runtime data — do NOT commit real resumes / DB / generated reports
+backend/uploads/*.pdf
+backend/reports/*.pdf
+backend/*.db
+backend/.pytest_cache/
+
+# OS / editor
+.DS_Store
+.vscode/
+"@ | Out-File -Encoding utf8 .gitignore

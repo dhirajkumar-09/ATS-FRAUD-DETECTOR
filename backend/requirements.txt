@@ -1,0 +1,40 @@
+# ── Phase 1 — core extraction + API ──────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.12        # required by FastAPI for file uploads
+sqlalchemy==2.0.36
+aiosqlite==0.20.0               # async SQLite driver (optional but useful)
+
+# PDF extraction
+PyMuPDF==1.24.13
+pdfplumber==0.11.4
+# pikepdf==9.4.2                # No Python 3.14 wheel yet; needs C++ Build Tools
+                                # Re-enable when a cp314 wheel is published, or downgrade to Python 3.12
+                                # PyMuPDF doc.metadata covers Phase 1 needs adequately
+
+# ── Phase 2 — fraud detectors ─────────────────────────────────────────────────
+python-dateutil==2.9.0
+# regex==2024.9.11              # Phase 2: zero-width char scanning — needs C++ build tools
+                                # Install with: pip install regex --only-binary :all:
+                                # Or: pip install regex after installing VS Build Tools
+# colormath==3.0.0              # optional – we use a manual RGB-distance fn instead
+
+# ── Phase 3 — AI detection + match score ──────────────────────────────────────
+# transformers==4.46.2          # heavy; add when Phase 3 is ready
+# torch==2.5.1                  # required by transformers
+# scikit-learn==1.5.2
+# spacy==3.8.2
+
+# ── Phase 4 — heatmap + forensic report ──────────────────────────────────────
+reportlab==4.2.5                # used by forensic_report.py — must be installed
+# pdf2image==1.17.0             # not needed: heatmap_generator.py rasterises via PyMuPDF (fitz), no Poppler required
+# Pillow==11.0.0                # not needed for the same reason
+
+# ── Development / testing ─────────────────────────────────────────────────────
+pytest==8.3.3
+httpx==0.27.2                   # async test client for FastAPI
+pytest-asyncio==0.24.0
+
+# ── Frontend (Phase 1 Streamlit) ──────────────────────────────────────────────
+streamlit==1.40.0
+requests==2.32.3
