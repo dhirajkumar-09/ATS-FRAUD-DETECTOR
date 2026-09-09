@@ -88,8 +88,12 @@ pytest tests/ -v
 ## Phase Status
 
 - [x] **Phase 1** — Skeleton + PDF extraction + `/scan` endpoint + Streamlit
-- [ ] **Phase 2** — Fraud detectors (zero-width, homoglyphs, hidden text, timeline)
-- [ ] **Phase 3** — AI content detection + True Match Score
-- [ ] **Phase 4** — Visual heatmap + Forensic PDF report
-- [ ] **Phase 5** — Frontend polish
+- [x] **Phase 2** — Fraud detectors (zero-width, homoglyphs, hidden text, off-page/tiny-font, timeline)
+- [x] **Phase 3** — AI content detection (heuristic + optional transformer) + True Match Score
+- [x] **Phase 4** — Visual heatmap + Forensic PDF report
+- [x] **Phase 5** — Frontend polish (evidence/case-file redesign)
 - [ ] **Phase 6** — Docker + deployment
+
+> Note: `reportlab` was previously commented out in `backend/requirements.txt` even
+> though `forensic_report.py` imports it — a fresh `pip install -r requirements.txt`
+> would install fine but crash the first time `/report/{id}/pdf` was called. Fixed.
