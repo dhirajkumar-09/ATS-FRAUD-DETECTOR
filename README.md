@@ -9,6 +9,7 @@
 - [Features](#features)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
+- [Authentication](#authentication)
 - [API Reference](#api-reference)
 - [Configuration](#configuration)
 - [Phase Status](#phase-status)
@@ -114,6 +115,8 @@ streamlit run frontend/app.py
 
 Visit **http://localhost:8501**
 
+The Streamlit app shows a **Log in / Register** screen first — every scan and report call it makes is authenticated (see [Authentication](#authentication) below).
+
 ### 5 — Run tests
 
 ```powershell
@@ -125,13 +128,107 @@ Expected: **139 passed**.
 
 ---
 
+## Authentication
+
+Every `/scan` and `/report` endpoint requires a **Bearer JWT**. There is no
+anonymous access — calling any of them without a token returns `401
+Unauthorized`. Accounts are scoped to an **organization**: the first person
+to register under a given `organization` name is auto-promoted to admin for
+that org, so no separate bootstrap step is needed.
+
+### Auth Endpoints
+
+| Method | Path | Auth required | Description |
+|--------|------|---|-------------|
+| `POST` | `/auth/register` | No | Create an account, returns a JWT immediately |
+| `POST` | `/auth/login` | No | OAuth2 password flow (`username` = email), returns a JWT |
+| `GET`  | `/auth/me` | Yes | Current user's profile |
+| `GET`  | `/auth/org-settings` | Yes | This user's org threshold overrides |
+| `PUT`  | `/auth/org-settings` | Yes (admin only) | Update org threshold overrides |
+
+### Register
+
+```
+POST /auth/register
+Content-Type: application/json
+
+{
+  "email": "recruiter@acme.com",
+  "password": "at-least-8-chars",
+  "full_name": "Jane Recruiter",
+  "organization": "Acme Corp"
+}
+```
+
+Response (also returned by `/auth/login`):
+
+```json
+{
+  "access_token": "eyJhbGciOi...",
+  "token_type": "bearer",
+  "user_id": 1,
+  "email": "recruiter@acme.com",
+  "organization": "Acme Corp",
+  "is_admin": true
+}
+```
+
+### Login
+
+```
+POST /auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=recruiter@acme.com&password=at-least-8-chars
+```
+
+> Login uses the standard OAuth2 password-flow form fields (`username` /
+> `password`), **not** JSON — this is what lets you authorize directly from
+> the `/docs` Swagger UI's "Authorize" button.
+
+### Using the token
+
+Every other endpoint below needs this header:
+
+```
+Authorization: Bearer <access_token>
+```
+
+### Org settings (admin)
+
+Admins can override two detection thresholds per organization instead of
+relying on the app-wide defaults in [Configuration](#configuration):
+
+```
+PUT /auth/org-settings
+Authorization: Bearer <admin's access_token>
+Content-Type: application/json
+
+{
+  "near_white_threshold": 25,
+  "hidden_font_size_pt": 1.5
+}
+```
+
+Pass `null` for either field to fall back to the app default. Non-admins can
+`GET /auth/org-settings` to see the current org values but cannot change them.
+
+> **No UI yet:** org-settings can only be read/changed via raw API calls or
+> the `/docs` Swagger page right now — the Streamlit frontend doesn't expose
+> a settings screen for it.
+
+---
+
 ## API Reference
 
 ### Core Endpoints
 
+All endpoints below require the `Authorization: Bearer <access_token>` header
+described in [Authentication](#authentication).
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`  | `/health` | Backend health check |
+| `GET`  | `/health` | Backend health check (no auth required) |
 | `POST` | `/scan` | Upload a single resume PDF; optional `job_description` form field |
 | `GET`  | `/scan/{scan_id}` | Retrieve full scan result (fraud signals, scores, narrative) |
 | `POST` | `/scan/batch` | Upload multiple resumes; returns ranked Trust Score leaderboard |
@@ -144,6 +241,7 @@ Expected: **139 passed**.
 
 ```
 POST /scan
+Authorization: Bearer <access_token>
 Content-Type: multipart/form-data
 
 file:            <resume.pdf>             (required)
@@ -176,6 +274,7 @@ job_description: "Senior Python engineer…" (optional)
 
 ```
 POST /scan/batch
+Authorization: Bearer <access_token>
 Content-Type: multipart/form-data
 
 files:           [resume1.pdf, resume2.pdf, …]
@@ -183,6 +282,22 @@ job_description: "…" (optional)
 ```
 
 Returns an array sorted by `trust_score DESC`, `true_match_score DESC`.
+
+### End-to-end example (curl)
+
+```powershell
+# 1. Register (or use /auth/login if you already have an account)
+curl -X POST http://localhost:8000/auth/register `
+  -H "Content-Type: application/json" `
+  -d '{\"email\":\"recruiter@acme.com\",\"password\":\"at-least-8-chars\",\"organization\":\"Acme Corp\"}'
+
+# Copy the "access_token" from the response, then:
+
+# 2. Scan a resume using the token
+curl -X POST http://localhost:8000/scan `
+  -H "Authorization: Bearer <PASTE_ACCESS_TOKEN_HERE>" `
+  -F "file=@resume.pdf"
+```
 
 ---
 
