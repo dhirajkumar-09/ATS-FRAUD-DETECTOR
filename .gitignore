@@ -14,3 +14,9 @@ backend/.pytest_cache/
 # OS / editor
 .DS_Store
 .vscode/
+
+backend/reports/*.pdf
+!backend/reports/.gitkeep
+backend/uploads/*.pdf
+!backend/uploads/.gitkeep
+backend/*.db
