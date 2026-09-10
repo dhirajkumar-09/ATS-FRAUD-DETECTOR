@@ -37,6 +37,12 @@ SEVERITY_ROW_COLORS = {
     "low":    colors.HexColor("#fff9db"),
 }
 
+TRUST_LABEL_COLORS = {
+    "Verified":  colors.HexColor("#2f9e6e"),
+    "Caution":   colors.HexColor("#c98a12"),
+    "High Risk": colors.HexColor("#c0392b"),
+}
+
 
 def generate_forensic_report(
     scan_result: dict,
@@ -111,6 +117,29 @@ def generate_forensic_report(
         story.append(meta_table)
         story.append(Spacer(1, 0.25 * inch))
 
+        # ── Trust Score badge ────────────────────────────────────────────
+        trust = scan_result.get("trust_score")
+        if trust:
+            label = trust.get("label", "—")
+            badge_color = TRUST_LABEL_COLORS.get(label, colors.HexColor("#555555"))
+            trust_style = ParagraphStyle(
+                "TrustBadge", parent=styles["Heading1"],
+                textColor=badge_color, fontSize=20, spaceAfter=2,
+            )
+            story.append(Paragraph(
+                f"{trust.get('emoji', '')} Trust Score: {trust.get('score', '—')}/100 — {label}",
+                trust_style,
+            ))
+            bd = trust.get("breakdown", {})
+            story.append(Paragraph(
+                f"Fraud component: {bd.get('fraud_component', '—')}/100 · "
+                f"Human-content component: {bd.get('integrity_component', '—')}/100 · "
+                f"Job-match component: "
+                f"{bd.get('match_component') if bd.get('match_component') is not None else 'n/a (no job description supplied)'}",
+                body_style,
+            ))
+            story.append(Spacer(1, 0.2 * inch))
+
         # ── Severity summary ─────────────────────────────────────────────
         fraud = scan_result.get("fraud_summary", {})
         story.append(Paragraph("Severity Summary", h2_style))
@@ -135,7 +164,19 @@ def generate_forensic_report(
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#dddddd")),
         ]))
         story.append(summary_table)
-        story.append(Spacer(1, 0.3 * inch))
+        story.append(Spacer(1, 0.2 * inch))
+
+        # ── Executive Forensic Briefing ──────────────────────────────────
+        narrative = scan_result.get("narrative")
+        if narrative:
+            story.append(Paragraph("Executive Forensic Briefing", h2_style))
+            rec_text = narrative.get("recommendation", "")
+            if rec_text:
+                story.append(Paragraph(f"<b>Recommendation:</b> {rec_text}", body_style))
+                story.append(Spacer(1, 0.05 * inch))
+            for factor in narrative.get("key_factors", [])[:3]:
+                story.append(Paragraph(f"• {factor}", body_style))
+            story.append(Spacer(1, 0.2 * inch))
 
         # ── Signal detail table ──────────────────────────────────────────
         story.append(Paragraph("Detected Fraud Signals", h2_style))
@@ -151,8 +192,7 @@ def generate_forensic_report(
                 ])
             sig_table = Table(
                 sig_rows,
-                colWidths=[0.55 * inch, 1.15 * inch, 0.35 * inch, 2.6 * inch, 1.85 * inch],
-                repeatRows=1,
+                colWidths=[0.6 * inch, 1.4 * inch, 0.4 * inch, 2.5 * inch, 1.6 * inch],
             )
             style_cmds = [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#343a40")),
@@ -172,26 +212,30 @@ def generate_forensic_report(
             story.append(Paragraph("No fraud signals detected.", body_style))
 
         # ── Annotated heatmap pages ───────────────────────────────────────
-        story.append(PageBreak())
-        story.append(Paragraph("Annotated Heatmap Pages", h2_style))
-        story.append(Paragraph(
-            "Red = high severity, orange = medium, yellow = low. "
-            "Boxes mark the exact bounding area of each detected signal.",
-            body_style,
-        ))
-        story.append(Spacer(1, 0.15 * inch))
+        if page_images:
+            story.append(PageBreak())
+            story.append(Paragraph("Annotated Heatmap Pages", h2_style))
+            story.append(Paragraph(
+                "Red = high severity, orange = medium, yellow = low. "
+                "Boxes mark the exact bounding area of each detected signal.",
+                body_style,
+            ))
+            story.append(Spacer(1, 0.15 * inch))
 
-        max_width = 6.5 * inch
-        for page_num, png_bytes in enumerate(page_images, start=1):
-            img_buf = io.BytesIO(png_bytes)
-            rl_img = RLImage(img_buf)
-            # Scale to fit page width, preserving aspect ratio
-            scale = max_width / rl_img.imageWidth
-            rl_img.drawWidth = max_width
-            rl_img.drawHeight = rl_img.imageHeight * scale
-            story.append(Paragraph(f"Page {page_num}", styles["Heading4"]))
-            story.append(rl_img)
-            story.append(Spacer(1, 0.2 * inch))
+            max_width = 6.5 * inch
+            for page_num, png_bytes in enumerate(page_images, start=1):
+                img_buf = io.BytesIO(png_bytes)
+                rl_img = RLImage(img_buf)
+                scale = max_width / rl_img.imageWidth
+                rl_img.drawWidth = max_width
+                rl_img.drawHeight = rl_img.imageHeight * scale
+                story.append(Paragraph(f"Page {page_num}", styles["Heading4"]))
+                story.append(rl_img)
+                story.append(Spacer(1, 0.2 * inch))
+        else:
+            story.append(Spacer(1, 0.15 * inch))
+            story.append(Paragraph("No renderable pages found for heatmap display.", body_style))
+
 
         doc.build(story)
 

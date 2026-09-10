@@ -30,6 +30,240 @@ from dateutil.relativedelta import relativedelta
 SignalDict = dict[str, Any]
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 0a. PDF LAYER-ORDER FORENSICS  (Feature 1)
+# ─────────────────────────────────────────────────────────────────────────────
+# Consumes `word_order` produced by pdf_extractor._compute_word_order_signal():
+# [{"page", "word_count", "disorder_ratio", "sample_words"}, ...]
+#
+# disorder_ratio close to 0   → extraction order ≈ visual reading order (normal)
+# disorder_ratio high         → underlying content-stream order is scrambled
+#                                relative to what a human sees — a hallmark of
+#                                deliberately reordered/stuffed PDF content
+#                                meant to confuse ATS parsers while looking
+#                                normal to a human reviewer.
+_LAYER_ORDER_HIGH_THRESHOLD = 0.30
+_LAYER_ORDER_MEDIUM_THRESHOLD = 0.15
+
+
+def detect_layer_order_mismatch(word_order: list[dict] | None) -> list[SignalDict]:
+    """
+    Flag pages where the PDF's internal text-extraction order diverges
+    sharply from top-to-bottom/left-to-right visual reading order.
+
+    Severity:
+      HIGH   — disorder_ratio > 0.30 (heavily scrambled)
+      MEDIUM — disorder_ratio > 0.15 (partially scrambled)
+    """
+    signals: list[SignalDict] = []
+    if not word_order:
+        return signals
+
+    for page_stat in word_order:
+        ratio = page_stat.get("disorder_ratio", 0.0)
+        if ratio <= _LAYER_ORDER_MEDIUM_THRESHOLD:
+            continue
+
+        severity = "high" if ratio > _LAYER_ORDER_HIGH_THRESHOLD else "medium"
+        sample = ", ".join(page_stat.get("sample_words", [])[:12])
+        desc = (
+            f"Underlying PDF text order diverges {ratio:.0%} from visual reading "
+            f"order across {page_stat.get('word_count', 0)} words — text may have "
+            f"been deliberately reordered in the content stream to confuse ATS "
+            f"parsers while still looking normal to a human reader."
+        )
+        signals.append({
+            "signal_type":   "layer_order_mismatch",
+            "severity":      severity,
+            "page":          page_stat["page"],
+            "bbox":          None,
+            "description":   desc,
+            "evidence_text": _snippet(sample),
+        })
+
+    return signals
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 0b. METADATA FORENSICS  ("Digital Fingerprint" check — Feature 2)
+# ─────────────────────────────────────────────────────────────────────────────
+# Consumes the `metadata` dict returned by pdf_extractor._extract_metadata().
+_GENERIC_BUILDER_TOOLS: tuple[str, ...] = (
+    "canva", "zety", "resume.io", "resumeio", "resume genius", "resumegenius",
+    "novoresume", "kickresume", "resumonk", "enhancv", "standard resume",
+    "resumemaker", "resume-now", "resumebuild", "cvmaker", "myperfectresume",
+    "visualcv", "docs.google.com", "google docs",
+)
+
+_PDF_DATE_RE = re.compile(
+    r"D:(?P<Y>\d{4})(?P<m>\d{2})(?P<d>\d{2})"
+    r"(?P<H>\d{2})?(?P<M>\d{2})?(?P<S>\d{2})?"
+)
+
+
+def _parse_pdf_date(raw: str | None) -> datetime | None:
+    """Parse a PDF-format date string like 'D:20240115120000+00'00''."""
+    if not raw:
+        return None
+    m = _PDF_DATE_RE.match(raw)
+    if not m:
+        return None
+    g = m.groupdict(default="0")
+    try:
+        return datetime(
+            int(g["Y"]), int(g["m"]), int(g["d"]),
+            int(g["H"] or 0), int(g["M"] or 0), int(g["S"] or 0),
+        )
+    except ValueError:
+        return None
+
+
+def detect_metadata_red_flags(metadata: dict[str, str] | None) -> list[SignalDict]:
+    """
+    Cross-check PDF metadata (Creator/Producer software, creation vs.
+    modification timestamps) against what a "professionally authored, stable
+    resume" would look like.
+
+    Signals raised:
+      - metadata_generic_builder_tool (MEDIUM): Producer/Creator matches a
+        known free/instant resume-builder template tool.
+      - metadata_rapid_edit_window (MEDIUM): ModDate is only minutes/hours
+        after CreationDate yet the file was generated very recently —
+        consistent with a resume assembled and tweaked in a rush right
+        before submission rather than a maintained personal document.
+      - metadata_stripped (LOW): No creation/producer info at all, which can
+        indicate metadata was deliberately scrubbed to hide the tool of
+        origin.
+    """
+    signals: list[SignalDict] = []
+    if metadata is None:
+        return signals
+
+    creator  = (metadata.get("creator")  or "").strip()
+    producer = (metadata.get("producer") or "").strip()
+    combined = f"{creator} {producer}".lower()
+
+    matched_tool = next((t for t in _GENERIC_BUILDER_TOOLS if t in combined), None)
+    if matched_tool:
+        signals.append({
+            "signal_type":   "metadata_generic_builder_tool",
+            "severity":      "medium",
+            "page":          1,
+            "bbox":          None,
+            "description":   (
+                f"Document metadata identifies the authoring tool as "
+                f"{creator or producer!r}, matching known free/instant resume "
+                f"builder '{matched_tool}'. Not disqualifying on its own, but "
+                f"worth weighing against claimed seniority/experience."
+            ),
+            "evidence_text": f"Creator={creator!r} Producer={producer!r}",
+        })
+
+    created  = _parse_pdf_date(metadata.get("creationDate"))
+    modified = _parse_pdf_date(metadata.get("modDate"))
+
+    if created and modified:
+        gap = modified - created
+        gap_minutes = gap.total_seconds() / 60.0
+
+        # Rushed-together red flag: created & last edited within the same
+        # short window — consistent with a resume assembled/tweaked right before submission
+        if 0 < gap_minutes < 120:
+            signals.append({
+                "signal_type":   "metadata_rapid_edit_window",
+                "severity":      "medium",
+                "page":          1,
+                "bbox":          None,
+                "description":   (
+                    f"File was created and last modified only "
+                    f"{gap_minutes:.0f} minute(s) apart — consistent "
+                    f"with a resume rapidly assembled/edited right before "
+                    f"submission rather than a maintained, long-standing document."
+                ),
+                "evidence_text": (
+                    f"CreationDate={metadata.get('creationDate')!r} "
+                    f"ModDate={metadata.get('modDate')!r}"
+                ),
+            })
+
+        if gap.total_seconds() < 0:
+            signals.append({
+                "signal_type":   "metadata_mod_before_creation",
+                "severity":      "low",
+                "page":          1,
+                "bbox":          None,
+                "description":   (
+                    "Document's ModDate is earlier than its CreationDate — "
+                    "an internal inconsistency that can indicate manual "
+                    "metadata tampering."
+                ),
+                "evidence_text": (
+                    f"CreationDate={metadata.get('creationDate')!r} "
+                    f"ModDate={metadata.get('modDate')!r}"
+                ),
+            })
+
+    if not creator and not producer and not metadata.get("creationDate"):
+        signals.append({
+            "signal_type":   "metadata_stripped",
+            "severity":      "low",
+            "page":          1,
+            "bbox":          None,
+            "description":   (
+                "No creator/producer/creation-date metadata present at all. "
+                "This can be entirely innocent, but it can also indicate "
+                "metadata was deliberately stripped to hide the authoring tool."
+            ),
+            "evidence_text": None,
+        })
+
+    return signals
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 0c. IMAGE-ONLY PAGE DETECTION  (OCR-bypass check — Feature 3)
+# ─────────────────────────────────────────────────────────────────────────────
+# Consumes `image_pages` produced by pdf_extractor._compute_image_page_stats():
+# [{"page", "text_char_count", "image_area_ratio", "is_suspected_image_only"}, ...]
+
+def detect_image_only_pages(image_pages: list[dict] | None) -> list[SignalDict]:
+    """
+    Flag pages that are visually dominated by a large embedded image yet
+    contain almost no extractable text — a common trick to defeat
+    text-based fraud/keyword scanners entirely, since the "text" a human
+    sees is actually a picture.
+
+    Severity: HIGH — this fully defeats naive text extraction.
+    """
+    signals: list[SignalDict] = []
+    if not image_pages:
+        return signals
+
+    for page_stat in image_pages:
+        if not page_stat.get("is_suspected_image_only"):
+            continue
+
+        desc = (
+            f"Page {page_stat['page']} is ~"
+            f"{page_stat['image_area_ratio']:.0%} covered by embedded "
+            f"image(s) but has only {page_stat['text_char_count']} "
+            f"extractable text character(s) — this page may be a scanned/"
+            f"flattened image standing in for real text, which would let it "
+            f"bypass any text-based ATS or fraud scan entirely. Run OCR to "
+            f"recover and re-check the actual content."
+        )
+        signals.append({
+            "signal_type":   "image_only_page",
+            "severity":      "high",
+            "page":          page_stat["page"],
+            "bbox":          None,
+            "description":   desc,
+            "evidence_text": None,
+        })
+
+    return signals
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 1. ZERO-WIDTH CHARACTER DETECTOR
 # ─────────────────────────────────────────────────────────────────────────────
 # These characters are invisible but picked up by ATS keyword parsers.
@@ -169,7 +403,7 @@ def detect_homoglyphs(spans: list[dict]) -> list[SignalDict]:
             non_neutral = scripts - {"Neutral", "Other"}
             if len(non_neutral) >= 2 and suspect_chars:
                 desc = (
-                    f"Word {word!r} mixes scripts {non_neutral} "
+                    f"Word {word!r} mixes scripts {sorted(non_neutral)} "
                     f"with suspected homoglyphs: {', '.join(suspect_chars)}"
                 )
                 signals.append({
@@ -368,11 +602,12 @@ _DATE_RANGE_RE = re.compile(
 _TODAY = date.today()
 
 
-def _parse_date_fuzzy(raw: str) -> date | None:
+def _parse_date_fuzzy(raw: str, ref_date: date | None = None) -> date | None:
     """Parse a date string; returns None if unparseable."""
     raw = raw.strip()
+    target_today = ref_date or date.today()
     if re.match(r"(?:Present|Current|Now|Ongoing|Today)", raw, re.IGNORECASE):
-        return _TODAY
+        return target_today
     # Bare year → Jan 1 of that year
     if re.fullmatch(r"\d{4}", raw):
         return date(int(raw), 1, 1)
@@ -382,7 +617,7 @@ def _parse_date_fuzzy(raw: str) -> date | None:
         return None
 
 
-def extract_date_ranges(spans: list[dict]) -> list[dict]:
+def extract_date_ranges(spans: list[dict], ref_date: date | None = None) -> list[dict]:
     """
     Scan all text spans for date-range patterns and return a list of:
     {
@@ -404,8 +639,8 @@ def extract_date_ranges(spans: list[dict]) -> list[dict]:
     for page_num, parts in page_texts.items():
         text = " ".join(parts)
         for m in _DATE_RANGE_RE.finditer(text):
-            start = _parse_date_fuzzy(m.group("start"))
-            end   = _parse_date_fuzzy(m.group("end"))
+            start = _parse_date_fuzzy(m.group("start"), ref_date)
+            end   = _parse_date_fuzzy(m.group("end"), ref_date)
             if start and end:
                 ranges.append({
                     "start": start,
@@ -418,7 +653,7 @@ def extract_date_ranges(spans: list[dict]) -> list[dict]:
     return ranges
 
 
-def detect_timeline_issues(parsed_ranges: list[dict]) -> list[SignalDict]:
+def detect_timeline_issues(parsed_ranges: list[dict], ref_date: date | None = None) -> list[SignalDict]:
     """
     Given a list of date ranges (from `extract_date_ranges`), detect:
 
@@ -432,6 +667,7 @@ def detect_timeline_issues(parsed_ranges: list[dict]) -> list[SignalDict]:
       MEDIUM — overlapping jobs (could be consulting/part-time)
     """
     signals: list[SignalDict] = []
+    target_today = ref_date or date.today()
 
     # ── a. Individual range sanity checks ────────────────────────────────────
     for r in parsed_ranges:
@@ -453,7 +689,7 @@ def detect_timeline_issues(parsed_ranges: list[dict]) -> list[SignalDict]:
                 "evidence_text": raw,
             })
 
-        if start > _TODAY:
+        if start > target_today:
             signals.append({
                 "signal_type":   "timeline_future_start",
                 "severity":      "high",
@@ -468,7 +704,7 @@ def detect_timeline_issues(parsed_ranges: list[dict]) -> list[SignalDict]:
 
     # ── b. Overlap detection (O(n²) — n is typically < 20 for a resume) ────
     valid = [r for r in parsed_ranges if r["end"] >= r["start"]]
-    valid.sort(key=lambda r: r["start"])
+    valid.sort(key=lambda r: (r["start"], r["end"], r["page"]))
     grace = relativedelta(months=1)   # allow 1-month overlap (job transitions)
 
     for i in range(len(valid)):
@@ -512,10 +748,18 @@ def run_all_detectors(
     background_color: tuple[int, int, int] = (255, 255, 255),
     hidden_text_threshold: int = 30,
     hidden_size_threshold: float = 1.0,
+    metadata: dict[str, str] | None = None,
+    word_order: list[dict] | None = None,
+    image_pages: list[dict] | None = None,
+    reference_date: date | None = None,
 ) -> list[SignalDict]:
     """
-    Run every detector and return the combined signal list.
-    Adding a new detector in Phase 3+ only requires registering it here.
+    Run every detector and return the combined signal list in deterministic order.
+    Adding a new detector only requires registering it here.
+
+    `metadata`, `word_order`, and `image_pages` are optional (Phase 5) — pass
+    them from pdf_extractor.extract_pdf()'s return dict to enable the
+    metadata-forensics, layer-order, and image-only-page detectors.
     """
     signals: list[SignalDict] = []
     signals.extend(detect_zero_width_chars(spans))
@@ -523,10 +767,30 @@ def run_all_detectors(
     signals.extend(detect_hidden_text(spans, background_color, hidden_text_threshold))
     signals.extend(detect_offpage_or_zero_size(spans, page_dims, hidden_size_threshold))
 
-    date_ranges = extract_date_ranges(spans)
-    signals.extend(detect_timeline_issues(date_ranges))
+    date_ranges = extract_date_ranges(spans, ref_date=reference_date)
+    signals.extend(detect_timeline_issues(date_ranges, ref_date=reference_date))
+
+    # ── Phase 5 additions ───────────────────────────────────────────────────
+    signals.extend(detect_layer_order_mismatch(word_order))
+    signals.extend(detect_metadata_red_flags(metadata))
+    signals.extend(detect_image_only_pages(image_pages))
+
+    # ── Deterministic sorting ───────────────────────────────────────────────
+    # Sort order: page (ascending), severity (high -> medium -> low),
+    # signal_type (alphabetical), bbox coordinates, and description.
+    _sev_rank = {"high": 0, "medium": 1, "low": 2}
+    signals.sort(
+        key=lambda s: (
+            s.get("page", 1),
+            _sev_rank.get(s.get("severity", "low"), 3),
+            s.get("signal_type", ""),
+            tuple(s.get("bbox") or (0.0, 0.0, 0.0, 0.0)),
+            s.get("description", ""),
+        )
+    )
 
     return signals
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

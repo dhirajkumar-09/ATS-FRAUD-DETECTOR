@@ -17,7 +17,9 @@ from app.auth import get_current_user
 from app.config import REPORTS_DIR
 from app.database import get_db
 from app.models import ScanResult, User
+from app.services.forensic_narrative import generate_score_narrative
 from app.services.forensic_report import generate_forensic_report
+from app.services.trust_score import compute_trust_score
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/report", tags=["report"])
@@ -110,4 +112,29 @@ def _build_scan_result_dict(scan: ScanResult, resume) -> dict:
         },
         "ai_content_score": scan.ai_content_score,
         "true_match_score": scan.true_match_score,
+        "trust_score": (
+            {"score": scan.trust_score, "label": scan.trust_label,
+             "emoji": {"Verified": "🟢", "Caution": "🟡", "High Risk": "🔴"}.get(scan.trust_label, ""),
+             "breakdown": {}}
+            if scan.trust_score is not None
+            else compute_trust_score(
+                fraud_summary={
+                    "high": scan.high_count, "medium": scan.medium_count, "low": scan.low_count,
+                },
+                ai_content_score=scan.ai_content_score,
+                true_match_score=scan.true_match_score,
+            )
+        ),
+        "narrative": generate_score_narrative(
+            fraud_summary={
+                "total": scan.total_signals,
+                "high": scan.high_count,
+                "medium": scan.medium_count,
+                "low": scan.low_count,
+                "signals": signals,
+            },
+            ai_content={"score": scan.ai_content_score},
+            true_match={"score": scan.true_match_score} if scan.true_match_score is not None else None,
+            trust_score={"score": scan.trust_score, "label": scan.trust_label},
+        ),
     }

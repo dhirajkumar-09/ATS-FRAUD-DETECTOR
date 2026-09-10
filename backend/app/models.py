@@ -92,6 +92,10 @@ class ScanResult(Base):
     true_match_score  = Column(Float, nullable=True)
     ai_content_score  = Column(Float, nullable=True)
 
+    # Phase 5 — composite Trust Score badge
+    trust_score  = Column(Float, nullable=True)   # 0-100
+    trust_label  = Column(String(16), nullable=True)   # Verified | Caution | High Risk
+
     resume  = relationship("Resume", back_populates="scan_result")
     signals = relationship("FraudSignal", back_populates="scan_result",
                            cascade="all, delete-orphan")

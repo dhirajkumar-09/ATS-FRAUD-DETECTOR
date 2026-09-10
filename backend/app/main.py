@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import APP_TITLE, APP_VERSION
-from app.database import Base, engine
+from app.database import Base, engine, init_db
 from app.routers import auth, report, scan
 
 # ── Logging ──────────────────────────────────────────────────────────────────
@@ -19,9 +19,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Create DB tables ──────────────────────────────────────────────────────────
-Base.metadata.create_all(bind=engine)
-logger.info("Database tables ensured.")
+# ── Create DB tables & ensure schema ──────────────────────────────────────────
+init_db()
+logger.info("Database tables and schema ensured.")
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(

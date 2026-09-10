@@ -1,5 +1,3 @@
-
-Auth · PY
 """
 auth.py — Phase 5
 ==================
@@ -93,4 +91,3 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
             detail="Only an organization admin can do this.",
         )
     return current_user
- 

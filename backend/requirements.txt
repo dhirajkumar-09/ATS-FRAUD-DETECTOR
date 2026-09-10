@@ -28,7 +28,18 @@ python-dateutil==2.9.0
 # ── Phase 4 — heatmap + forensic report ──────────────────────────────────────
 reportlab==4.2.5                # used by forensic_report.py — must be installed
 # pdf2image==1.17.0             # not needed: heatmap_generator.py rasterises via PyMuPDF (fitz), no Poppler required
-# Pillow==11.0.0                # not needed for the same reason
+
+# ── Phase 5 — layer-order / metadata / image-only-page forensics + Trust Score ──
+Pillow==11.0.0                  # needed by ocr_helper.py to hand pixmaps to pytesseract
+pytesseract==0.3.13              # OPTIONAL — OCR bypass check (Feature 3).
+                                 # Also requires the Tesseract OCR *binary* on the
+                                 # system (not just this pip package):
+                                 #   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+                                 #   macOS:   brew install tesseract
+                                 #   Linux:   sudo apt install tesseract-ocr
+                                 # If the binary isn't found, ocr_helper.py degrades
+                                 # gracefully — the image-only-page signal still fires,
+                                 # it just won't have recovered OCR text attached.
 
 # ── Phase 5 — auth / multi-user ───────────────────────────────────────────────
 PyJWT==2.9.0
@@ -41,6 +52,8 @@ pytest==8.3.3
 httpx==0.27.2                   # async test client for FastAPI
 pytest-asyncio==0.24.0
 
-# ── Frontend (Phase 1 Streamlit) ──────────────────────────────────────────────
+# ── Frontend (Streamlit Dashboard & Leaderboard) ─────────────────────────────
 streamlit==1.40.0
 requests==2.32.3
+charset-normalizer==3.5.1
+pandas>=2.2.0

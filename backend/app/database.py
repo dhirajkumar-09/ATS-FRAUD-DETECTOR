@@ -19,6 +19,25 @@ class Base(DeclarativeBase):
     pass
 
 
+def init_db():
+    """Ensure all tables and columns are created cleanly on startup."""
+    Base.metadata.create_all(bind=engine)
+    if DATABASE_URL.startswith("sqlite"):
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy import text
+                res = conn.execute(text("PRAGMA table_info(scan_results)"))
+                existing_cols = {row[1] for row in res.fetchall()}
+                if existing_cols:
+                    if "trust_score" not in existing_cols:
+                        conn.execute(text("ALTER TABLE scan_results ADD COLUMN trust_score FLOAT"))
+                    if "trust_label" not in existing_cols:
+                        conn.execute(text("ALTER TABLE scan_results ADD COLUMN trust_label VARCHAR(16)"))
+                    conn.commit()
+        except Exception:
+            pass
+
+
 def get_db():
     """FastAPI dependency: yields a DB session and ensures it is closed."""
     db = SessionLocal()
@@ -26,3 +45,4 @@ def get_db():
         yield db
     finally:
         db.close()
+

@@ -1,99 +1,246 @@
 # ATS Fraud Detector
 
-Recruiter-facing tool that scans resume PDFs for ATS manipulation techniques.
+> **Recruiter-grade forensic tool** that scans resume PDFs for ATS-manipulation techniques, scores AI authorship, measures job-description match, and issues a blended Trust Score with an executive briefing.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Project Structure](#project-structure)
+- [Quick Start](#quick-start)
+- [API Reference](#api-reference)
+- [Configuration](#configuration)
+- [Phase Status](#phase-status)
+- [Running Tests](#running-tests)
+
+---
+
+## Features
+
+| Category | What it detects / generates |
+|---|---|
+| **Fraud Signals** | Zero-width characters, Unicode homoglyphs, hidden / near-white text, off-page / tiny-font text, layer-order & word-order mismatch, metadata red flags, image-only pages |
+| **AI Content Score** | Heuristic burstiness + perplexity score (0–100, higher = more likely AI-written) |
+| **True Match Score** | TF-IDF cosine similarity of resume text vs. job description (0–100) |
+| **Trust Score** | Blended verdict — `Verified` / `Caution` / `High Risk` — guaranteed consistent with signal severity |
+| **Forensic Narrative** | Plain-English executive briefing: verdict, key factors, recommendation, limitations |
+| **SVG Trust Badge** | Shields-style coloured badge you can embed in ATS dashboards or emails |
+| **Batch Leaderboard** | Upload multiple resumes, get a ranked table sorted by Trust Score + Match Score |
+| **Span Inspector** | Side-by-side clean vs flagged text-span comparison per page |
+| **Forensic PDF Report** | Full ReportLab PDF with heatmap, executive briefing, signal detail table |
+
+---
 
 ## Project Structure
 
 ```
-ats-fraud-detector/
+innovations/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                # FastAPI entrypoint
-│   │   ├── config.py              # All tunable thresholds / env vars
-│   │   ├── database.py            # SQLAlchemy engine + session
-│   │   ├── models.py              # Resume, ScanResult, FraudSignal, TextSpan
+│   │   ├── main.py                   # FastAPI entry-point + lifespan
+│   │   ├── config.py                 # All tunable thresholds / env vars
+│   │   ├── database.py               # SQLAlchemy engine + auto-migration
+│   │   ├── models.py                 # Resume, ScanResult, FraudSignal, TextSpan
+│   │   ├── auth.py                   # JWT auth helpers
 │   │   ├── routers/
-│   │   │   ├── scan.py            # POST /scan, GET /scan/{id}
-│   │   │   └── report.py          # GET /report/{id}/pdf  (Phase 4)
+│   │   │   ├── scan.py               # All /scan endpoints (single, batch, inspect, badge)
+│   │   │   └── report.py             # GET /report/{id}/pdf
 │   │   └── services/
-│   │       ├── pdf_extractor.py   # PyMuPDF + pdfplumber + pikepdf
-│   │       ├── fraud_detectors.py # Phase 2 detectors (stubs)
-│   │       ├── ai_content_detector.py  # Phase 3 stub
-│   │       ├── match_scorer.py    # Phase 3 stub
-│   │       ├── heatmap_generator.py    # Phase 4 stub
-│   │       └── forensic_report.py      # Phase 4 stub
+│   │       ├── pdf_extractor.py      # PyMuPDF + pdfplumber — robust extraction
+│   │       ├── fraud_detectors.py    # 8 fraud detectors, deterministic output
+│   │       ├── ai_content_detector.py
+│   │       ├── match_scorer.py       # TF-IDF cosine match
+│   │       ├── heatmap_generator.py  # Per-page heatmap rendering
+│   │       ├── forensic_report.py    # ReportLab PDF report
+│   │       ├── forensic_narrative.py # Plain-English executive briefing
+│   │       ├── badge_generator.py    # SVG trust badge
+│   │       ├── trust_score.py        # Blended scoring + consistency enforcement
+│   │       └── ocr_helper.py         # Tesseract fallback
 │   ├── requirements.txt
 │   └── tests/
-│       └── test_pdf_extractor.py
-└── frontend/
-    └── app.py                     # Streamlit MVP
+│       ├── fixtures/                 # 5 deterministic test PDFs
+│       ├── generate_fixtures.py      # Fixture generator script
+│       ├── test_pdf_extractor.py
+│       ├── test_fraud_detectors.py
+│       ├── test_phase3.py
+│       ├── test_phase5_features.py
+│       └── test_audit_and_features.py  # Audit + new-feature tests (12 tests)
+├── frontend/
+│   ├── app.py                        # Streamlit "Cyber-Forensic Audit Station"
+│   └── .streamlit/
+│       └── config.toml               # Dark forensic theme
+└── .streamlit/
+    └── config.toml                   # Root-level theme fallback
 ```
+
+---
 
 ## Quick Start
 
-### 1 — Install dependencies
+### 1 — Clone & create virtual environment
 
 ```powershell
-cd ats-fraud-detector\backend
+cd C:\innovations\backend
 python -m venv .venv
 .venv\Scripts\Activate.ps1
+```
+
+### 2 — Install backend dependencies
+
+```powershell
 pip install -r requirements.txt
 ```
 
-### 2 — Run the backend
+> **Note:** `chardet` is intentionally **not** listed. It conflicts with `urllib3`'s `charset-normalizer` and emits a `RequestsDependencyWarning` on every Streamlit start. Use `charset-normalizer` (already listed) instead.
+
+### 3 — Run the backend
 
 ```powershell
-# from backend/
-uvicorn app.main:app --reload --port 8000
+# from C:\innovations\backend\
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 Visit **http://localhost:8000/docs** for the interactive Swagger UI.
 
-### 3 — Run the Streamlit frontend (new terminal)
+### 4 — Run the Streamlit frontend (new terminal)
 
 ```powershell
-# from ats-fraud-detector/
+# from C:\innovations\
+.venv\Scripts\streamlit.exe run frontend/app.py
+# OR activate the venv first, then:
 streamlit run frontend/app.py
 ```
 
 Visit **http://localhost:8501**
 
-### 4 — Run tests
+### 5 — Run tests
 
 ```powershell
-# from backend/
+# from C:\innovations\backend\
 pytest tests/ -v
 ```
 
-## API Endpoints (Phase 1)
+Expected: **139 passed**.
+
+---
+
+## API Reference
+
+### Core Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/scan` | Upload PDF, extract spans, return `scan_id` |
-| `GET`  | `/scan/{scan_id}` | Retrieve full scan result |
-| `GET`  | `/report/{scan_id}/pdf` | Download forensic PDF *(Phase 4)* |
-| `GET`  | `/health` | Health check |
+| `GET`  | `/health` | Backend health check |
+| `POST` | `/scan` | Upload a single resume PDF; optional `job_description` form field |
+| `GET`  | `/scan/{scan_id}` | Retrieve full scan result (fraud signals, scores, narrative) |
+| `POST` | `/scan/batch` | Upload multiple resumes; returns ranked Trust Score leaderboard |
+| `GET`  | `/scan/{scan_id}/inspect` | Forensic side-by-side span inspector (clean vs flagged) |
+| `GET`  | `/scan/{scan_id}/badge.svg` | Download SVG trust badge for embedding |
+| `GET`  | `/report/{scan_id}/pdf` | Download full forensic PDF report |
 | `GET`  | `/docs` | Swagger UI |
 
-## Configuration (env vars)
+### `/scan` — Request
+
+```
+POST /scan
+Content-Type: multipart/form-data
+
+file:            <resume.pdf>             (required)
+job_description: "Senior Python engineer…" (optional)
+```
+
+### `/scan` — Response (abbreviated)
+
+```json
+{
+  "scan_id": 42,
+  "filename": "resume.pdf",
+  "trust_score": 78.3,
+  "trust_label": "Caution",
+  "fraud_signals": [...],
+  "fraud_summary": {"high": 0, "medium": 1, "low": 2},
+  "ai_content_score": 34.1,
+  "true_match_score": 61.2,
+  "narrative": {
+    "verdict_title": "Caution — Moderate Manipulation Risk",
+    "recommendation": "...",
+    "summary": "...",
+    "key_factors": [...],
+    "limitations_disclaimer": "..."
+  }
+}
+```
+
+### `/scan/batch` — Request
+
+```
+POST /scan/batch
+Content-Type: multipart/form-data
+
+files:           [resume1.pdf, resume2.pdf, …]
+job_description: "…" (optional)
+```
+
+Returns an array sorted by `trust_score DESC`, `true_match_score DESC`.
+
+---
+
+## Configuration
+
+All thresholds live in [`config.py`](file:///C:/innovations/backend/app/config.py) and can be overridden with environment variables:
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+|---|---|---|
 | `DATABASE_URL` | `sqlite:///ats_fraud.db` | SQLAlchemy connection string |
 | `MAX_UPLOAD_BYTES` | `20971520` (20 MB) | Max PDF upload size |
 | `NEAR_WHITE_THRESHOLD` | `30` | RGB Euclidean distance for hidden-text check |
-| `HIDDEN_FONT_SIZE_PT` | `1.0` | Font-size (pt) ≤ this → hidden text flag |
-| `AI_DETECTOR_MODEL` | `distilgpt2` | HuggingFace model for Phase 3 |
+| `HIDDEN_FONT_SIZE_PT` | `1.0` | Font size (pt) ≤ this → hidden text flag |
+| `AI_DETECTOR_MODEL` | `distilgpt2` | HuggingFace model for AI content detection |
+| `SECRET_KEY` | *(random)* | JWT signing key |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | JWT TTL |
+
+---
+
+## Running Tests
+
+```powershell
+# All tests
+pytest tests/ -v
+
+# Single suite
+pytest tests/test_audit_and_features.py -v
+
+# With coverage
+pytest tests/ --cov=app --cov-report=term-missing
+```
+
+### Test suites
+
+| File | Tests | Coverage |
+|---|---|---|
+| `test_pdf_extractor.py` | PDF parsing, edge cases | `pdf_extractor.py` |
+| `test_fraud_detectors.py` | All 8 detectors, edge cases | `fraud_detectors.py` |
+| `test_phase3.py` | AI content + match scorer | `ai_content_detector.py`, `match_scorer.py` |
+| `test_phase5_features.py` | Layer order, metadata, trust score | `trust_score.py`, `fraud_detectors.py` |
+| `test_audit_and_features.py` | Determinism, consistency, API endpoints, edge PDFs | All services + routers |
+
+---
 
 ## Phase Status
 
-- [x] **Phase 1** — Skeleton + PDF extraction + `/scan` endpoint + Streamlit
-- [x] **Phase 2** — Fraud detectors (zero-width, homoglyphs, hidden text, off-page/tiny-font, timeline)
-- [x] **Phase 3** — AI content detection (heuristic + optional transformer) + True Match Score
-- [x] **Phase 4** — Visual heatmap + Forensic PDF report
-- [x] **Phase 5** — Frontend polish (evidence/case-file redesign)
-- [ ] **Phase 6** — Docker + deployment
+| Phase | Description | Status |
+|---|---|---|
+| **Phase 1** | Skeleton + PDF extraction + `/scan` endpoint + Streamlit MVP | ✅ Done |
+| **Phase 2** | Fraud detectors (zero-width, homoglyphs, hidden text, off-page/tiny-font, timeline) | ✅ Done |
+| **Phase 3** | AI content detection + True Match Score (TF-IDF) | ✅ Done |
+| **Phase 4** | Visual heatmap + Forensic PDF report (ReportLab) | ✅ Done |
+| **Phase 5** | Frontend polish — evidence/case-file redesign | ✅ Done |
+| **Phase 6** | Full audit + determinism + UI redesign + new features | ✅ Done |
+| **Phase 7** | Docker + cloud deployment | 🔲 Planned |
 
-> Note: `reportlab` was previously commented out in `backend/requirements.txt` even
-> though `forensic_report.py` imports it — a fresh `pip install -r requirements.txt`
-> would install fine but crash the first time `/report/{id}/pdf` was called. Fixed.
+---
+
+## What's New in Phase 6
+
+See [`PHASE6_CHANGES.md`](./PHASE6_CHANGES.md) for the full change log, including every bug fixed, every determinism guarantee added, the UI rewrite, and the new API features.
