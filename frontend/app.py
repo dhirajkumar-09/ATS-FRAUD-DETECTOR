@@ -718,11 +718,12 @@ auth_headers = {"Authorization": f"Bearer {st.session_state['auth_token']}"}
 # ═══════════════════════════════════════════════════════════════════════════════
 # Navigation Tabs
 # ═══════════════════════════════════════════════════════════════════════════════
-tab_scan, tab_inspect, tab_batch, tab_badge = st.tabs([
+tab_scan, tab_inspect, tab_batch, tab_badge, tab_settings = st.tabs([
     "📄 Single Resume Scan",
     "🔬 Span Inspector",
     "📊 Batch Leaderboard",
     "🛡️ Trust Badge",
+    "⚙️ Org Settings",
 ])
 
 
@@ -1252,6 +1253,109 @@ with tab_badge:
                 f"Verdict: {n_info.get('recommendation')}"
             )
             st.text_area("Recruiter ATS Shortlist Note", value=recruiter_note, height=140)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 5: Org Settings
+# ─────────────────────────────────────────────────────────────────────────────
+with tab_settings:
+    acct = st.session_state.get("auth_user", {})
+    is_admin = bool(acct.get("is_admin"))
+    org_name = acct.get("organization", "")
+
+    st.markdown(f"**Organization:** {esc(org_name)}")
+    st.caption(
+        "These two thresholds override the app-wide defaults "
+        "(`NEAR_WHITE_THRESHOLD`, `HIDDEN_FONT_SIZE_PT`) for every scan run by "
+        "anyone in this organization. Leave a field blank to fall back to the "
+        "app default."
+    )
+
+    if not api_online:
+        st.markdown(
+            render_state("🔌", "Backend Unavailable", f"Cannot reach the API at {api_base}.", error=True),
+            unsafe_allow_html=True,
+        )
+    else:
+        try:
+            settings_resp = requests.get(f"{api_base}/auth/org-settings", headers=auth_headers, timeout=10)
+        except requests.ConnectionError:
+            settings_resp = None
+
+        if settings_resp is None:
+            st.markdown(
+                render_state("🔌", "Backend Unavailable", f"Cannot reach the API at {api_base}.", error=True),
+                unsafe_allow_html=True,
+            )
+        elif settings_resp.status_code == 401:
+            st.markdown(
+                render_state("🔒", "Session Expired", "Your session has expired. Please log in again from the sidebar.", error=True),
+                unsafe_allow_html=True,
+            )
+        elif settings_resp.status_code != 200:
+            st.markdown(
+                render_state("❌", "Could Not Load Settings", "Failed to fetch current org settings from the server.", error=True),
+                unsafe_allow_html=True,
+            )
+        else:
+            current = settings_resp.json()
+            cur_near_white = current.get("near_white_threshold")
+            cur_hidden_font = current.get("hidden_font_size_pt")
+
+            with st.container(border=True):
+                st.markdown("**Current Overrides**")
+                c1, c2 = st.columns(2)
+                c1.metric("Near-White Threshold", cur_near_white if cur_near_white is not None else "App default")
+                c2.metric("Hidden Font Size (pt)", cur_hidden_font if cur_hidden_font is not None else "App default")
+
+            if not is_admin:
+                st.info("Only org admins can change these settings. Ask your organization's admin to update them.")
+            else:
+                with st.form("org_settings_form"):
+                    use_default_nw = st.checkbox(
+                        "Use app default for Near-White Threshold",
+                        value=cur_near_white is None,
+                        key="use_default_nw",
+                    )
+                    new_near_white = st.number_input(
+                        "Near-White Threshold (RGB Euclidean distance)",
+                        min_value=0, max_value=255,
+                        value=cur_near_white if cur_near_white is not None else 30,
+                        disabled=use_default_nw,
+                    )
+
+                    use_default_hf = st.checkbox(
+                        "Use app default for Hidden Font Size",
+                        value=cur_hidden_font is None,
+                        key="use_default_hf",
+                    )
+                    new_hidden_font = st.number_input(
+                        "Hidden Font Size Threshold (pt)",
+                        min_value=0.0, max_value=72.0, step=0.5,
+                        value=float(cur_hidden_font) if cur_hidden_font is not None else 1.0,
+                        disabled=use_default_hf,
+                    )
+
+                    save_settings_btn = st.form_submit_button("💾 Save Org Settings", type="primary", use_container_width=True)
+
+                if save_settings_btn:
+                    payload = {
+                        "near_white_threshold": None if use_default_nw else int(new_near_white),
+                        "hidden_font_size_pt": None if use_default_hf else float(new_hidden_font),
+                    }
+                    try:
+                        put_resp = requests.put(
+                            f"{api_base}/auth/org-settings", json=payload, headers=auth_headers, timeout=10,
+                        )
+                        if put_resp.status_code == 200:
+                            st.success("Org settings updated. New thresholds apply to all future scans.")
+                            st.rerun()
+                        elif put_resp.status_code == 403:
+                            st.error("Only org admins can update these settings.")
+                        else:
+                            st.error(put_resp.json().get("detail", "Failed to save settings."))
+                    except requests.ConnectionError:
+                        st.error(f"Cannot reach backend at {api_base}.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
