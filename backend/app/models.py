@@ -12,7 +12,7 @@ import json
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, DateTime, Float, ForeignKey, Integer, String, Text
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 )
 from sqlalchemy.orm import relationship
 
@@ -24,17 +24,51 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ── User ─────────────────────────────────────────────────────────────────────
+class User(Base):
+    """A recruiter account. Owns resumes/scans and belongs to an organization."""
+    __tablename__ = "users"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    email           = Column(String(320), nullable=False, unique=True, index=True)
+    hashed_password = Column(String(128), nullable=False)
+    full_name       = Column(String(256), nullable=True)
+    organization    = Column(String(256), nullable=False, index=True)
+    is_admin        = Column(Boolean, default=False)  # can edit org-level thresholds
+    created_at      = Column(DateTime, default=_utcnow)
+
+    resumes = relationship("Resume", back_populates="owner")
+
+
+# ── OrgSettings ───────────────────────────────────────────────────────────────
+class OrgSettings(Base):
+    """
+    Per-organization overrides for fraud-detection thresholds.
+    One row per `organization` string; falls back to app.config defaults
+    when no row exists yet.
+    """
+    __tablename__ = "org_settings"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    organization        = Column(String(256), nullable=False, unique=True, index=True)
+    near_white_threshold = Column(Integer, nullable=True)   # None → use config default
+    hidden_font_size_pt  = Column(Float, nullable=True)     # None → use config default
+    updated_at          = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 # ── Resume ───────────────────────────────────────────────────────────────────
 class Resume(Base):
     __tablename__ = "resumes"
 
     id          = Column(Integer, primary_key=True, index=True)
+    owner_id    = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     filename    = Column(String(512), nullable=False)
     file_path   = Column(String(1024), nullable=False)
     sha256      = Column(String(64), nullable=False, index=True)
     uploaded_at = Column(DateTime, default=_utcnow)
     page_count  = Column(Integer, default=0)
 
+    owner       = relationship("User", back_populates="resumes")
     scan_result = relationship("ScanResult", back_populates="resume", uselist=False)
 
 

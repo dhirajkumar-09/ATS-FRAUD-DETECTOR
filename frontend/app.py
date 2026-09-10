@@ -317,12 +317,79 @@ with st.sidebar:
     st.markdown('<div class="section-eyebrow">CONFIGURATION</div>', unsafe_allow_html=True)
     api_base = st.text_input("API base URL", value=API_BASE)
     st.markdown("<br>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-eyebrow">ACCOUNT</div>', unsafe_allow_html=True)
+    if st.session_state.get("auth_token"):
+        acct = st.session_state.get("auth_user", {})
+        st.markdown(f"**{esc(acct.get('email', ''))}**")
+        st.caption(
+            f"{esc(acct.get('organization', ''))} · "
+            f"{'admin' if acct.get('is_admin') else 'member'}"
+        )
+        if st.button("Log out", use_container_width=True):
+            for k in ("auth_token", "auth_user", "scan_data", "report_pdf_bytes", "report_scan_id"):
+                st.session_state.pop(k, None)
+            st.rerun()
+    else:
+        tab_login, tab_register = st.tabs(["Log in", "Register"])
+
+        with tab_login:
+            login_email = st.text_input("Email", key="login_email")
+            login_password = st.text_input("Password", type="password", key="login_password")
+            if st.button("Log in", key="login_btn", use_container_width=True):
+                try:
+                    r = requests.post(
+                        f"{api_base}/auth/login",
+                        data={"username": login_email, "password": login_password},
+                        timeout=15,
+                    )
+                except requests.ConnectionError:
+                    st.error(f"Cannot reach API at `{api_base}`.")
+                    r = None
+                if r is not None:
+                    if r.status_code == 200:
+                        st.session_state["auth_token"] = r.json()["access_token"]
+                        st.session_state["auth_user"] = r.json()
+                        st.rerun()
+                    else:
+                        st.error(r.json().get("detail", "Login failed."))
+
+        with tab_register:
+            reg_name = st.text_input("Full name", key="reg_name")
+            reg_org = st.text_input("Organization", key="reg_org", help="First person to register for an org becomes its admin")
+            reg_email = st.text_input("Email", key="reg_email")
+            reg_password = st.text_input("Password", type="password", key="reg_password", help="At least 8 characters")
+            if st.button("Create account", key="register_btn", use_container_width=True):
+                try:
+                    r = requests.post(
+                        f"{api_base}/auth/register",
+                        json={
+                            "email": reg_email,
+                            "password": reg_password,
+                            "full_name": reg_name or None,
+                            "organization": reg_org,
+                        },
+                        timeout=15,
+                    )
+                except requests.ConnectionError:
+                    st.error(f"Cannot reach API at `{api_base}`.")
+                    r = None
+                if r is not None:
+                    if r.status_code == 201:
+                        st.session_state["auth_token"] = r.json()["access_token"]
+                        st.session_state["auth_user"] = r.json()
+                        st.rerun()
+                    else:
+                        st.error(r.json().get("detail", "Registration failed."))
+
+    st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-eyebrow">SYSTEM MODULES</div>', unsafe_allow_html=True)
     modules = [
         ("Extraction", True),
         ("Fraud Detectors", True),
         ("AI Score + Match", True),
         ("Heatmap + Report", True),
+        ("Auth + Org Settings", True),
     ]
     for name, done in modules:
         dot_cls = "dot" if done else "dot pending"
@@ -330,6 +397,13 @@ with st.sidebar:
             f'<div class="module-row"><span class="{dot_cls}"></span>{esc(name)}</div>',
             unsafe_allow_html=True,
         )
+
+# ── Auth gate ──────────────────────────────────────────────────────────────────
+if not st.session_state.get("auth_token"):
+    st.info("Log in or create an account from the sidebar to start scanning.")
+    st.stop()
+
+auth_headers = {"Authorization": f"Bearer {st.session_state['auth_token']}"}
 
 # ── Upload + JD ───────────────────────────────────────────────────────────────
 st.markdown('<div class="section-eyebrow">STEP 1</div>', unsafe_allow_html=True)
@@ -375,6 +449,7 @@ if run_clicked:
                 f"{api_base}/scan",
                 files={"file": (uploaded.name, uploaded.getvalue(), "application/pdf")},
                 data=form_data,
+                headers=auth_headers,
                 timeout=60,
             )
         except requests.ConnectionError:
@@ -390,6 +465,11 @@ if run_clicked:
         st.session_state["scan_data"] = data
         st.session_state.pop("report_pdf_bytes", None)
         st.session_state.pop("report_scan_id", None)
+    elif resp.status_code == 401:
+        st.session_state.pop("auth_token", None)
+        st.session_state.pop("auth_user", None)
+        st.error("Your session expired. Please log in again from the sidebar.")
+        st.stop()
     else:
         st.error(f"API error {resp.status_code}: {resp.text}")
         st.stop()
@@ -549,7 +629,9 @@ if st.button("Generate / Fetch Forensic Report", key="fetch_report_btn"):
     with st.spinner("Building forensic report (baking the heatmap onto the PDF)…"):
         report_resp = None
         try:
-            report_resp = requests.get(f"{api_base}/report/{scan_id}/pdf", timeout=120)
+            report_resp = requests.get(
+                f"{api_base}/report/{scan_id}/pdf", headers=auth_headers, timeout=120
+            )
         except requests.ConnectionError:
             st.error(f"Cannot reach API at `{api_base}`.")
 
@@ -557,6 +639,10 @@ if st.button("Generate / Fetch Forensic Report", key="fetch_report_btn"):
         if report_resp.status_code == 200:
             st.session_state["report_pdf_bytes"] = report_resp.content
             st.session_state["report_scan_id"] = scan_id
+        elif report_resp.status_code == 401:
+            st.session_state.pop("auth_token", None)
+            st.session_state.pop("auth_user", None)
+            st.error("Your session expired. Please log in again from the sidebar.")
         else:
             st.error(f"Report generation failed ({report_resp.status_code}): {report_resp.text}")
 

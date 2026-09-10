@@ -34,6 +34,13 @@ HIDDEN_FONT_SIZE_PT: float = float(os.getenv("HIDDEN_FONT_SIZE_PT", 1.0))
 # ── AI detector ─────────────────────────────────────────────────────────────
 AI_DETECTOR_MODEL: str = os.getenv("AI_DETECTOR_MODEL", "distilgpt2")
 
+# ── Auth (Phase 5) ────────────────────────────────────────────────────────────
+# IMPORTANT: set JWT_SECRET_KEY yourself in production — this default is only
+# for local dev and is intentionally obvious so nobody mistakes it for secure.
+JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "dev-only-change-me-before-deploying")
+JWT_ALGORITHM: str = "HS256"
+JWT_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", 60 * 24))  # 24h
+
 # ── App metadata ─────────────────────────────────────────────────────────────
 APP_TITLE: str = "ATS Fraud Detector"
 APP_VERSION: str = "0.1.0"

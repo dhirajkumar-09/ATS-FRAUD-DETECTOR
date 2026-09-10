@@ -16,9 +16,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.config import MAX_UPLOAD_BYTES, UPLOAD_DIR
+from app.auth import get_current_user
+from app.config import HIDDEN_FONT_SIZE_PT, MAX_UPLOAD_BYTES, NEAR_WHITE_THRESHOLD, UPLOAD_DIR
 from app.database import get_db
-from app.models import FraudSignal, Resume, ScanResult, TextSpan
+from app.models import FraudSignal, OrgSettings, Resume, ScanResult, TextSpan, User
 from app.services.ai_content_detector import compute_ai_score
 from app.services.fraud_detectors import run_all_detectors
 from app.services.match_scorer import compute_true_match_score, spans_to_clean_text
@@ -40,6 +41,7 @@ async def create_scan(
         description="Job description text (optional). Enables True Match Score.",
     ),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Upload a PDF resume. Runs:
@@ -94,10 +96,17 @@ async def create_scan(
     dest_path = UPLOAD_DIR / f"{sha256}.pdf"
     shutil.move(str(tmp_path), str(dest_path))
 
-    # ── 5. Create / reuse Resume row (idempotent on same sha256) ──────────
-    resume = db.query(Resume).filter_by(sha256=sha256).first()
+    # ── 5. Create / reuse Resume row (idempotent on same sha256, per user) ─
+    # Scoped to owner_id so two recruiters uploading the same PDF each get
+    # their own Resume/ScanResult rows instead of silently sharing one.
+    resume = (
+        db.query(Resume)
+        .filter_by(sha256=sha256, owner_id=current_user.id)
+        .first()
+    )
     if resume is None:
         resume = Resume(
+            owner_id=current_user.id,
             filename=file.filename or "unknown.pdf",
             file_path=str(dest_path),
             sha256=sha256,
@@ -124,10 +133,27 @@ async def create_scan(
         ts.set_spans(page_spans)
         db.add(ts)
 
-    # ── 8. Run detectors (Phase 1: all return [] stubs) ───────────────────
+    # ── 8. Run detectors, applying this org's threshold overrides if set ──
+    org_settings = (
+        db.query(OrgSettings)
+        .filter_by(organization=current_user.organization)
+        .first()
+    )
+    near_white = (
+        org_settings.near_white_threshold
+        if org_settings and org_settings.near_white_threshold is not None
+        else NEAR_WHITE_THRESHOLD
+    )
+    hidden_size = (
+        org_settings.hidden_font_size_pt
+        if org_settings and org_settings.hidden_font_size_pt is not None
+        else HIDDEN_FONT_SIZE_PT
+    )
     signals = run_all_detectors(
         spans=extracted["spans"],
         page_dims=extracted["page_dims"],
+        hidden_text_threshold=near_white,
+        hidden_size_threshold=hidden_size,
     )
 
     severity_counts = {"high": 0, "medium": 0, "low": 0}
@@ -241,13 +267,20 @@ async def create_scan(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/{scan_id}")
-def get_scan(scan_id: int, db: Session = Depends(get_db)):
+def get_scan(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Retrieve a completed scan result including all stored spans and signals.
+    Only the recruiter who uploaded the resume can retrieve its scan.
     """
     scan: ScanResult | None = db.query(ScanResult).filter_by(id=scan_id).first()
     if not scan:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found.")
+    if scan.resume.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="This scan belongs to another account.")
 
     all_spans: list[dict] = []
     for ts in scan.spans:

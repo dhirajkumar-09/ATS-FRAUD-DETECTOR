@@ -13,9 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.auth import get_current_user
 from app.config import REPORTS_DIR
 from app.database import get_db
-from app.models import ScanResult
+from app.models import ScanResult, User
 from app.services.forensic_report import generate_forensic_report
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,11 @@ router = APIRouter(prefix="/report", tags=["report"])
 
 
 @router.get("/{scan_id}/pdf")
-def download_report(scan_id: int, db: Session = Depends(get_db)):
+def download_report(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Download the forensic evidence PDF for a completed scan.
 
@@ -34,6 +39,8 @@ def download_report(scan_id: int, db: Session = Depends(get_db)):
     scan: ScanResult | None = db.query(ScanResult).filter_by(id=scan_id).first()
     if not scan:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found.")
+    if scan.resume.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="This scan belongs to another account.")
 
     if scan.status != "done":
         raise HTTPException(

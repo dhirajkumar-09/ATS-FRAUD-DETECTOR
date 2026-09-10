@@ -30,6 +30,12 @@ reportlab==4.2.5                # used by forensic_report.py — must be install
 # pdf2image==1.17.0             # not needed: heatmap_generator.py rasterises via PyMuPDF (fitz), no Poppler required
 # Pillow==11.0.0                # not needed for the same reason
 
+# ── Phase 5 — auth / multi-user ───────────────────────────────────────────────
+PyJWT==2.9.0
+bcrypt==4.2.0                   # used directly, not via passlib — avoids the
+                                 # passlib / bcrypt>=4.1 version-detection bug
+pydantic[email]==2.9.2          # EmailStr validation on register/login schemas
+
 # ── Development / testing ─────────────────────────────────────────────────────
 pytest==8.3.3
 httpx==0.27.2                   # async test client for FastAPI

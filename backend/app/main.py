@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import APP_TITLE, APP_VERSION
 from app.database import Base, engine
-from app.routers import report, scan
+from app.routers import auth, report, scan
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -44,6 +44,7 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(auth.router)
 app.include_router(scan.router)
 app.include_router(report.router)
 
