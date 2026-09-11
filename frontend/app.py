@@ -17,7 +17,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-API_BASE = "http://localhost:8000"
+API_BASE = "http://localhost:8001"
 
 st.set_page_config(
     page_title="ATS Fraud Detector — Forensic Station",
