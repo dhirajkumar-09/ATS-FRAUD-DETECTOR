@@ -31,6 +31,7 @@ from app.services.match_scorer import compute_true_match_score, spans_to_clean_t
 from app.services.ocr_helper import ocr_page_text
 from app.services.pdf_extractor import extract_pdf
 from app.services.trust_score import compute_trust_score
+from app.services.resume_validator import is_likely_resume
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scan", tags=["scan"])
@@ -57,6 +58,20 @@ def _execute_pdf_scan(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Could not parse PDF: {exc}",
         ) from exc
+
+    # ── Resume validation ─────────────────────────────────────────────────────
+    full_text = " ".join(s.get("text", "") for s in extracted.get("spans", []))
+    is_resume, _val_details = is_likely_resume(full_text)
+    if not is_resume:
+        tmp_path.unlink(missing_ok=True)
+        logger.info(
+            "Rejected non-resume upload '%s' (validator: %s)",
+            original_filename, _val_details,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This doesn't look like a resume.",
+        )
 
     # ── Persist file with sha256 filename ────────────────────────────────────
     sha256 = extracted["sha256"]

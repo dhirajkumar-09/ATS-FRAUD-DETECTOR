@@ -1,393 +1,198 @@
 """
-forensic_report.py — Phase 4 (redesigned for hackathon demo)
-=============================================================
-Generates a professional "evidence" PDF for a completed scan.
+forensic_report.py — Phase 4 (single-page forensic summary + heatmap resume)
+=============================================================================
+Generates a professional forensic evidence PDF.
 
 Layout
 ------
-  1. Cover page  — title banner, metadata table, Trust Score arc gauge
-                   (drawn via canvas.arc), three sub-score stat boxes.
-  2. Executive Forensic Briefing — shaded callout box with left accent line.
-  3. Detected Fraud Signals table — alternating rows, severity-coded cell
-     tints, NOSPLIT so no row splits across a page break.
-  4. Annotated heatmap pages — a colour legend box, then each heatmap page
-     as an embedded PNG with a short caption below it.
+  Page 1  — Forensic Summary drawn entirely on the canvas (guaranteed 1 page).
+             Contains: banner, metadata, trust gauge, KPI stat boxes,
+             severity summary table, fraud signals table (capped/truncated to
+             fit), hidden words table (if present), executive briefing snippet.
 
-Header / footer on every page:
-  Left  → "ATS Fraud Detector — Forensic Evidence Report"
-  Right → "Page X of Y  |  Generated: <timestamp>"
+  Page 2+ — The heatmap-annotated original resume appended via
+             fitz.insert_pdf().  All original pages preserved in order.
 
-Brand colours match frontend/app.py CSS vars exactly:
-  --green  #10B981   --amber  #F59E0B   --red  #EF4444
+Strategy: Page 1 is drawn with pure ReportLab canvas calls, never using
+Platypus flowables that can reflow across pages.  All tables on Page 1 are
+rendered as raw canvas rectangles + text, with automatic row-height scaling
+so the content always fits in the available vertical space.
 
-Uses ReportLab only (pure-Python, no system-level deps).
+Uses ReportLab (canvas) + PyMuPDF (fitz) — both already in requirements.txt.
 """
 from __future__ import annotations
 
 import io
-import math
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reportlab.lib import colors
+import fitz  # PyMuPDF
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    Image as RLImage, PageBreak, KeepTogether,
-)
-from reportlab.platypus.flowables import HRFlowable
+from reportlab.pdfgen import canvas as rl_canvas
 
-from app.services.heatmap_generator import generate_heatmap, render_page_images
+from app.services.heatmap_generator import generate_heatmap
 
-# ── Brand colours (exact match with frontend/app.py CSS) ────────────────────
-GREEN   = colors.HexColor("#10B981")   # --green
-AMBER   = colors.HexColor("#F59E0B")   # --amber
-RED     = colors.HexColor("#EF4444")   # --red
+# ── Brand colours ────────────────────────────────────────────────────────────
+GREEN   = (16/255,  185/255, 129/255)   # #10B981
+AMBER   = (245/255, 158/255,  11/255)   # #F59E0B
+RED_C   = (239/255,  68/255,  68/255)   # #EF4444
+CYAN_C  = (  6/255, 182/255, 212/255)   # #06B6D4
 
-# Light tints for alternating table rows
-GREEN_TINT = colors.HexColor("#ecfdf5")
-AMBER_TINT = colors.HexColor("#fffbeb")
-RED_TINT   = colors.HexColor("#fef2f2")
+BG_DARK = (13/255,  15/255,  20/255)    # #0D0F14
+BG_CARD = (17/255,  19/255,  24/255)    # #111318
+BG_ELEV = (26/255,  29/255,  38/255)    # #1A1D26
+BORDER  = (42/255,  48/255,  64/255)    # #2A3040
+T_PRI   = (244/255, 245/255, 247/255)   # #F4F5F7
+T_SEC   = (160/255, 166/255, 180/255)   # #A0A6B4
+WHITE   = (1.0, 1.0, 1.0)
 
-# Background tones
-BG_DARK    = colors.HexColor("#0D0F14")   # --bg-secondary
-BG_CARD    = colors.HexColor("#111318")   # --bg-card
-BG_ELEV    = colors.HexColor("#1A1D26")   # --bg-elevated
-BORDER_CLR = colors.HexColor("#2A3040")   # --border-bright
-TEXT_PRI   = colors.HexColor("#F4F5F7")   # --text-primary
-TEXT_SEC   = colors.HexColor("#A0A6B4")   # --text-secondary
-
-SEVERITY_ROW_COLORS = {
-    "high":   RED_TINT,
-    "medium": AMBER_TINT,
-    "low":    GREEN_TINT,
-}
-
-TRUST_LABEL_COLORS = {
+TRUST_COLORS = {
     "Verified":  GREEN,
     "Caution":   AMBER,
-    "High Risk": RED,
+    "High Risk": RED_C,
+}
+SEV_COLORS = {
+    "high":   RED_C,
+    "medium": AMBER,
+    "low":    GREEN,
 }
 
-PAGE_W, PAGE_H = letter
-LEFT_MARGIN = RIGHT_MARGIN = 0.75 * inch
-TOP_MARGIN    = 1.0 * inch
-BOTTOM_MARGIN = 0.85 * inch
+PAGE_W, PAGE_H = letter   # 612 × 792 pt
 
 
-# ── Header / footer canvas callbacks ────────────────────────────────────────
+# ── Low-level canvas helpers ─────────────────────────────────────────────────
 
-def _make_header_footer(generated_at: str):
-    """Return (on_first_page, on_later_pages) callbacks for SimpleDocTemplate."""
+def _rgb(c: rl_canvas.Canvas, color: tuple) -> None:
+    c.setFillColorRGB(*color)
 
-    def _draw(canvas, doc):
-        canvas.saveState()
-        page_num   = doc.page
-        page_total = getattr(doc, "_pageCount", "?")
+def _stroke(c: rl_canvas.Canvas, color: tuple) -> None:
+    c.setStrokeColorRGB(*color)
 
-        # ── Top rule ──────────────────────────────────────────────────────
-        y_top = PAGE_H - 0.55 * inch
-        canvas.setStrokeColor(BORDER_CLR)
-        canvas.setLineWidth(0.5)
-        canvas.line(LEFT_MARGIN, y_top, PAGE_W - RIGHT_MARGIN, y_top)
+def _rect_fill(c, x, y, w, h, color, radius=0):
+    _rgb(c, color)
+    if radius:
+        c.roundRect(x, y, w, h, radius, fill=1, stroke=0)
+    else:
+        c.rect(x, y, w, h, fill=1, stroke=0)
 
-        # Left: report title
-        canvas.setFont("Helvetica-Bold", 7.5)
-        canvas.setFillColor(TEXT_SEC)
-        canvas.drawString(LEFT_MARGIN, y_top + 5, "ATS Fraud Detector — Forensic Evidence Report")
+def _draw_gauge(c, cx: float, cy: float, r: float, score: float, label: str) -> None:
+    """Semi-circular arc gauge."""
+    badge_color = TRUST_COLORS.get(label, T_SEC)
 
-        # Right: page + timestamp
-        right_text = f"Page {page_num}  |  {generated_at}"
-        canvas.setFont("Helvetica", 7)
-        canvas.drawRightString(PAGE_W - RIGHT_MARGIN, y_top + 5, right_text)
+    # Track arc
+    _stroke(c, BORDER)
+    c.setLineWidth(7)
+    c.arc(cx - r, cy - r, cx + r, cy + r, startAng=0, extent=180)
 
-        # ── Bottom rule ───────────────────────────────────────────────────
-        y_bot = 0.50 * inch
-        canvas.setStrokeColor(BORDER_CLR)
-        canvas.line(LEFT_MARGIN, y_bot, PAGE_W - RIGHT_MARGIN, y_bot)
-        canvas.setFont("Helvetica", 6.5)
-        canvas.setFillColor(TEXT_SEC)
-        canvas.drawString(LEFT_MARGIN, y_bot - 10, "CONFIDENTIAL — FOR AUTHORIZED RECRUITER USE ONLY")
-        canvas.drawRightString(PAGE_W - RIGHT_MARGIN, y_bot - 10, "ATS Fraud Detector © 2026")
-
-        canvas.restoreState()
-
-    return _draw, _draw
-
-
-# ── Trust Score arc gauge (drawn on the canvas directly) ────────────────────
-
-def _draw_gauge(canvas, cx: float, cy: float, r: float,
-                score: float, label: str) -> None:
-    """
-    Draw a semicircular arc gauge centred at (cx, cy) with radius r.
-    The arc spans from 180° to 0° (left-to-right across the top half),
-    and fills proportionally to score/100.
-    """
-    badge_color = TRUST_LABEL_COLORS.get(label, colors.HexColor("#555555"))
-
-    # Track arc (grey)
-    canvas.setStrokeColor(colors.HexColor("#2A3040"))
-    canvas.setLineWidth(8)
-    canvas.arc(cx - r, cy - r, cx + r, cy + r, startAng=0, extent=180)
-
-    # Progress arc (brand colour)
+    # Progress arc
     if score > 0:
         extent = 180.0 * (score / 100.0)
-        canvas.setStrokeColor(badge_color)
-        canvas.setLineWidth(8)
-        canvas.arc(cx - r, cy - r, cx + r, cy + r, startAng=180 - extent, extent=extent)
+        _stroke(c, badge_color)
+        c.setLineWidth(7)
+        c.arc(cx - r, cy - r, cx + r, cy + r, startAng=180 - extent, extent=extent)
 
     # Score number
-    canvas.setFillColor(badge_color)
-    canvas.setFont("Helvetica-Bold", 22)
-    canvas.drawCentredString(cx, cy + 4, f"{score:.0f}")
-
-    # "/100" subscript
-    canvas.setFont("Helvetica", 9)
-    canvas.setFillColor(TEXT_SEC)
-    canvas.drawCentredString(cx, cy - 10, "/100")
-
-    # Label below gauge
-    canvas.setFont("Helvetica-Bold", 9)
-    canvas.setFillColor(badge_color)
-    canvas.drawCentredString(cx, cy - 24, label.upper())
+    _rgb(c, badge_color)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawCentredString(cx, cy + 2, f"{score:.0f}")
+    _rgb(c, T_SEC)
+    c.setFont("Helvetica", 7)
+    c.drawCentredString(cx, cy - 9, "/100")
+    _rgb(c, badge_color)
+    c.setFont("Helvetica-Bold", 7)
+    c.drawCentredString(cx, cy - 20, label.upper())
 
 
-# ── Sub-score stat box helper ────────────────────────────────────────────────
-
-def _stat_box(canvas, x: float, y: float, w: float, h: float,
-              value: str, label: str, accent: colors.Color) -> None:
-    """Draw a labelled KPI box at (x, y) with width w and height h."""
-    # Background
-    canvas.setFillColor(BG_ELEV)
-    canvas.roundRect(x, y, w, h, 4, fill=1, stroke=0)
-    # Accent top border
-    canvas.setFillColor(accent)
-    canvas.rect(x, y + h - 3, w, 3, fill=1, stroke=0)
-    # Value
-    canvas.setFillColor(accent)
-    canvas.setFont("Helvetica-Bold", 16)
-    canvas.drawCentredString(x + w / 2, y + h - 26, value)
-    # Label
-    canvas.setFillColor(TEXT_SEC)
-    canvas.setFont("Helvetica", 7)
-    canvas.drawCentredString(x + w / 2, y + 6, label)
+def _stat_box(c, x: float, y: float, w: float, h: float,
+              value: str, label: str, color: tuple) -> None:
+    _rect_fill(c, x, y, w, h, BG_ELEV, radius=3)
+    _rect_fill(c, x, y + h - 2, w, 2, color)
+    _rgb(c, color)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawCentredString(x + w / 2, y + h - 20, value)
+    _rgb(c, T_SEC)
+    c.setFont("Helvetica", 6)
+    c.drawCentredString(x + w / 2, y + 5, label)
 
 
-# ── Cover page canvas callback ───────────────────────────────────────────────
-
-def _make_cover_page(scan_result: dict, generated_at: str):
-    """Return an onFirstPage callback that draws the entire cover page."""
-
-    def _draw_cover(canvas, doc):
-        canvas.saveState()
-
-        trust   = scan_result.get("trust_score") or {}
-        t_score = float(trust.get("score") or 0)
-        t_label = trust.get("label", "Unknown")
-        badge_color = TRUST_LABEL_COLORS.get(t_label, colors.HexColor("#555555"))
-        fraud   = scan_result.get("fraud_summary", {})
-        ai_score = scan_result.get("ai_content_score")
-        match_s  = scan_result.get("true_match_score")
-
-        # ── Dark title banner ─────────────────────────────────────────────
-        banner_h = 1.4 * inch
-        canvas.setFillColor(BG_DARK)
-        canvas.rect(0, PAGE_H - banner_h, PAGE_W, banner_h, fill=1, stroke=0)
-
-        # Accent line at bottom of banner
-        canvas.setFillColor(badge_color)
-        canvas.rect(0, PAGE_H - banner_h, PAGE_W, 3, fill=1, stroke=0)
-
-        canvas.setFillColor(TEXT_PRI)
-        canvas.setFont("Helvetica-Bold", 20)
-        canvas.drawString(LEFT_MARGIN, PAGE_H - 0.65 * inch,
-                          "ATS Fraud Detector")
-        canvas.setFont("Helvetica", 11)
-        canvas.setFillColor(TEXT_SEC)
-        canvas.drawString(LEFT_MARGIN, PAGE_H - 0.90 * inch,
-                          "FORENSIC EVIDENCE REPORT")
-
-        # Badge stamp (top-right)
-        stamp_text = t_label.upper()
-        canvas.setFillColor(badge_color)
-        sw = len(stamp_text) * 6.5 + 16
-        bx = PAGE_W - RIGHT_MARGIN - sw
-        canvas.roundRect(bx, PAGE_H - 0.85 * inch, sw, 20, 4, fill=1, stroke=0)
-        canvas.setFillColor(colors.white)
-        canvas.setFont("Helvetica-Bold", 8)
-        canvas.drawCentredString(bx + sw / 2, PAGE_H - 0.74 * inch, stamp_text)
-
-        # ── Metadata section ──────────────────────────────────────────────
-        meta_y = PAGE_H - banner_h - 0.35 * inch
-        fields = [
-            ("Scan ID",          str(scan_result.get("scan_id", "—"))),
-            ("Filename",         str(scan_result.get("filename", "—"))),
-            ("SHA-256",          str(scan_result.get("sha256", "—"))[:48] + "…"),
-            ("Pages",            str(scan_result.get("page_count", "—"))),
-            ("Scanned At",       str(scan_result.get("scanned_at") or generated_at)),
-            ("Report Generated", generated_at),
-        ]
-        col1_x = LEFT_MARGIN
-        col2_x = LEFT_MARGIN + 1.3 * inch
-        row_h   = 0.22 * inch
-        for i, (key, val) in enumerate(fields):
-            ry = meta_y - i * row_h
-            canvas.setFillColor(BG_ELEV)
-            canvas.rect(col1_x, ry - 2, 6.5 * inch, row_h - 1, fill=1, stroke=0)
-            canvas.setFont("Helvetica-Bold", 8)
-            canvas.setFillColor(TEXT_SEC)
-            canvas.drawString(col1_x + 4, ry + 5, key)
-            canvas.setFont("Courier", 8)
-            canvas.setFillColor(TEXT_PRI)
-            canvas.drawString(col2_x + 4, ry + 5, val)
-
-        # ── Trust Score gauge ─────────────────────────────────────────────
-        gauge_cx = LEFT_MARGIN + 0.85 * inch
-        gauge_cy = meta_y - len(fields) * row_h - 1.25 * inch
-        _draw_gauge(canvas, gauge_cx, gauge_cy, r=0.65 * inch,
-                    score=t_score, label=t_label)
-
-        # ── Sub-score stat boxes ──────────────────────────────────────────
-        box_y  = gauge_cy - 0.5 * inch
-        box_h  = 0.85 * inch
-        box_w  = 1.55 * inch
-        box_gap = 0.18 * inch
-        stat_x = LEFT_MARGIN + 1.9 * inch
-
-        high_signals = fraud.get("high", 0)
-        hs_color = RED if high_signals > 0 else GREEN
-
-        ai_val = f"{ai_score:.1f}" if ai_score is not None else "—"
-        ai_color = RED if (ai_score or 0) >= 70 else (AMBER if (ai_score or 0) >= 40 else GREEN)
-
-        ms_val = f"{match_s:.1f}" if match_s is not None else "—"
-        ms_color = colors.HexColor("#06B6D4")  # cyan
-
-        _stat_box(canvas, stat_x,                    box_y, box_w, box_h,
-                  str(high_signals), "HIGH SIGNALS", hs_color)
-        _stat_box(canvas, stat_x + box_w + box_gap,  box_y, box_w, box_h,
-                  ai_val, "AI CONTENT %", ai_color)
-        _stat_box(canvas, stat_x + 2*(box_w + box_gap), box_y, box_w, box_h,
-                  ms_val, "JOB MATCH %", ms_color)
-
-        # ── Header / footer ───────────────────────────────────────────────
-        # (Cover page gets a simplified header — no "Page X of Y")
-        y_top = PAGE_H - 0.30 * inch
-        canvas.setStrokeColor(BORDER_CLR)
-        canvas.setLineWidth(0.4)
-        canvas.line(LEFT_MARGIN, y_top, PAGE_W - RIGHT_MARGIN, y_top)
-
-        y_bot = 0.50 * inch
-        canvas.line(LEFT_MARGIN, y_bot, PAGE_W - RIGHT_MARGIN, y_bot)
-        canvas.setFont("Helvetica", 6.5)
-        canvas.setFillColor(TEXT_SEC)
-        canvas.drawString(LEFT_MARGIN, y_bot - 10,
-                          "CONFIDENTIAL — FOR AUTHORIZED RECRUITER USE ONLY")
-        canvas.drawRightString(PAGE_W - RIGHT_MARGIN, y_bot - 10,
-                               "ATS Fraud Detector © 2026")
-
-        canvas.restoreState()
-
-    return _draw_cover
-
-
-# ── Heatmap legend flowable ──────────────────────────────────────────────────
-
-def _heatmap_legend() -> Table:
-    """Return a styled Table that serves as the heatmap colour legend."""
-    legend_data = [
-        ["", "Colour", "Severity",    "Meaning"],
-        ["", "■ Red",   "High",       "Deliberate ATS evasion / tampering — immediate review required"],
-        ["", "■ Orange","Medium",     "Formatting anomaly or timeline inconsistency — warrants verification"],
-        ["", "■ Yellow","Low",        "Minor irregularity — low risk, log for reference"],
-    ]
-    swatch_colors = [None, RED, AMBER, colors.HexColor("#F0C040")]
-
-    tbl = Table(
-        legend_data,
-        colWidths=[0.1 * inch, 0.85 * inch, 0.7 * inch, 4.85 * inch],
-    )
-
-    style_cmds = [
-        ("BACKGROUND", (0, 0), (-1, 0), BG_ELEV),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), TEXT_SEC),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0, 0), (-1, -1), 8),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [BG_CARD, BG_ELEV]),
-        ("GRID",       (0, 0), (-1, -1), 0.3, BORDER_CLR),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING",    (0, 0), (-1, -1), 5),
-    ]
-    # Colour the swatch cells
-    for i, sc in enumerate(swatch_colors):
-        if sc is not None:
-            style_cmds.append(("TEXTCOLOR", (1, i), (1, i), sc))
-            style_cmds.append(("FONTNAME",  (1, i), (1, i), "Helvetica-Bold"))
-
-    tbl.setStyle(TableStyle(style_cmds))
-    return tbl
-
-
-# ── Executive Briefing callout box ───────────────────────────────────────────
-
-def _briefing_callout(narrative: dict, label: str, body_style: ParagraphStyle) -> Table:
+def _draw_mini_table(
+    c,
+    x: float, y_top: float,
+    col_widths: list[float],
+    headers: list[str],
+    rows: list[list[str]],
+    row_h: float = 14.0,
+    font_size: float = 7.0,
+    max_rows: int | None = None,
+    col_colors: dict[int, dict[str, tuple]] | None = None,
+) -> float:
     """
-    Wrap the executive briefing text in a shaded callout box with a
-    left accent line colour-coded by trust verdict.
+    Draw a compact table entirely via canvas calls.
+    Returns the y coordinate of the bottom of the table.
+
+    col_colors: {col_index: {"header": color, "cells": [(row_index, color), ...]}}
     """
-    accent = TRUST_LABEL_COLORS.get(label, colors.HexColor("#555555"))
+    if col_colors is None:
+        col_colors = {}
 
-    rec_text = narrative.get("recommendation", "")
-    factors  = narrative.get("key_factors", [])[:4]
-    discl    = narrative.get("limitations_disclaimer", "")
+    # Clamp rows to max_rows
+    display_rows = rows if max_rows is None else rows[:max_rows]
+    truncated = max_rows is not None and len(rows) > max_rows
 
-    # Build inner content as a single-cell table
-    inner_style = ParagraphStyle(
-        "CalloutBody", parent=body_style,
-        fontSize=8.5, leading=13, textColor=TEXT_PRI,
-    )
-    heading_style = ParagraphStyle(
-        "CalloutHeading", parent=body_style,
-        fontSize=10, fontName="Helvetica-Bold",
-        textColor=accent, spaceAfter=4,
-    )
-    note_style = ParagraphStyle(
-        "CalloutNote", parent=body_style,
-        fontSize=7.5, textColor=TEXT_SEC, leading=11, spaceBefore=6,
-    )
+    total_w = sum(col_widths)
+    header_h = row_h + 2
 
-    paras = [Paragraph("Executive Forensic Briefing", heading_style)]
-    if rec_text:
-        paras.append(Paragraph(f"<b>Recommendation:</b> {rec_text}", inner_style))
-        paras.append(Spacer(1, 0.06 * inch))
-    for factor in factors:
-        paras.append(Paragraph(f"• {factor}", inner_style))
-    if discl:
-        paras.append(Paragraph(discl, note_style))
+    # Header background
+    _rect_fill(c, x, y_top - header_h, total_w, header_h, BG_ELEV)
 
-    # Left accent strip
-    accent_strip_data = [["", paras]]
-    callout = Table(
-        accent_strip_data,
-        colWidths=[0.12 * inch, 5.88 * inch],
-    )
-    callout.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, 0), accent),
-        ("BACKGROUND", (1, 0), (1, 0), BG_ELEV),
-        ("VALIGN",     (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (1, 0), (1, 0), 10),
-        ("BOTTOMPADDING", (1, 0), (1, 0), 10),
-        ("LEFTPADDING",   (1, 0), (1, 0), 10),
-        ("RIGHTPADDING",  (1, 0), (1, 0), 10),
-        ("BOX",        (0, 0), (-1, -1), 0.5, BORDER_CLR),
-    ]))
-    return callout
+    # Header text
+    cx_pos = x
+    for ci, (hdr, cw) in enumerate(zip(headers, col_widths)):
+        color = col_colors.get(ci, {}).get("header", T_SEC)
+        _rgb(c, color)
+        c.setFont("Helvetica-Bold", font_size)
+        c.drawString(cx_pos + 3, y_top - header_h + 4, hdr[:int(cw / (font_size * 0.55))])
+        cx_pos += cw
+
+    y = y_top - header_h
+
+    for ri, row in enumerate(display_rows):
+        bg = BG_CARD if ri % 2 == 0 else (13/255, 15/255, 20/255)
+        _rect_fill(c, x, y - row_h, total_w, row_h, bg)
+
+        cx_pos = x
+        for ci, (cell, cw) in enumerate(zip(row, col_widths)):
+            # per-cell colour overrides
+            cell_color_map = col_colors.get(ci, {}).get("cells", [])
+            cell_clr = T_PRI
+            for (r_idx, clr) in cell_color_map:
+                if r_idx == ri:
+                    cell_clr = clr
+                    break
+
+            _rgb(c, cell_clr)
+            max_chars = max(1, int(cw / (font_size * 0.52)))
+            text = str(cell)[:max_chars]
+            c.setFont("Helvetica", font_size)
+            c.drawString(cx_pos + 3, y - row_h + 4, text)
+            cx_pos += cw
+
+        y -= row_h
+
+    if truncated:
+        _rgb(c, T_SEC)
+        c.setFont("Helvetica-Oblique", 6)
+        c.drawString(x + 3, y - 2, f"… {len(rows) - max_rows} more rows omitted — see full signals list above")
+        y -= 10
+
+    # Border around entire table
+    _stroke(c, BORDER)
+    c.setLineWidth(0.4)
+    c.rect(x, y, total_w, y_top - y, fill=0, stroke=1)
+
+    return y
 
 
 # ── Main public function ─────────────────────────────────────────────────────
@@ -400,223 +205,279 @@ def generate_forensic_report(
     """
     Build the forensic evidence PDF and write it to output_path.
 
+    Page 1  = Single-page forensic summary (always exactly 1 page).
+    Page 2+ = Heatmap-annotated resume pages (all original pages preserved).
+
     Parameters
     ----------
-    scan_result : dict shaped like the /scan/{id} response, expecting at
-        least: scan_id, filename, sha256, scanned_at (iso str, optional),
-        page_count, fraud_summary {total, high, medium, low, signals: [...]},
-        ai_content_score (optional), true_match_score (optional).
-    original_pdf_path : Path to the original uploaded PDF on disk.
-    output_path : where to write the generated report PDF.
-
-    Returns
-    -------
-    Path to the generated report (same as output_path).
+    scan_result        : dict with keys: scan_id, filename, sha256, scanned_at,
+                         page_count, fraud_summary, ai_content_score,
+                         true_match_score, trust_score, narrative, hidden_words.
+    original_pdf_path  : Path to the original uploaded PDF on disk.
+    output_path        : Destination for the combined report PDF.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    scanned_at   = scan_result.get("scanned_at") or generated_at
 
-    # ── 1. Render heatmap pages to PNG blobs ───────────────────────────────
-    signals = scan_result.get("fraud_summary", {}).get("signals", [])
+    trust    = scan_result.get("trust_score") or {}
+    t_score  = float(trust.get("score") or 0)
+    t_label  = trust.get("label", "Unknown")
+    badge_color = TRUST_COLORS.get(t_label, T_SEC)
+
+    fraud    = scan_result.get("fraud_summary", {})
+    signals  = fraud.get("signals", [])
+    ai_score = scan_result.get("ai_content_score")
+    match_s  = scan_result.get("true_match_score")
+    narrative = scan_result.get("narrative") or {}
+    hidden_words = scan_result.get("hidden_words", []) or []
+
+    # ── Step 1: draw Page 1 forensic summary via ReportLab canvas ────────────
+    summary_buf = io.BytesIO()
+    c = rl_canvas.Canvas(summary_buf, pagesize=letter)
+
+    LM = 0.5 * inch    # left margin
+    RM = 0.5 * inch    # right margin
+    BM = 0.4 * inch    # bottom margin
+    CONTENT_W = PAGE_W - LM - RM   # 7.5 inch
+
+    # ── Banner ───────────────────────────────────────────────────────────────
+    BANNER_H = 0.80 * inch
+    _rect_fill(c, 0, PAGE_H - BANNER_H, PAGE_W, BANNER_H, BG_DARK)
+    _rect_fill(c, 0, PAGE_H - BANNER_H, PAGE_W, 2.5, badge_color)  # accent line
+
+    _rgb(c, T_PRI)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(LM, PAGE_H - 0.40 * inch, "ATS Fraud Detector")
+    _rgb(c, T_SEC)
+    c.setFont("Helvetica", 9)
+    c.drawString(LM, PAGE_H - 0.60 * inch, "FORENSIC EVIDENCE REPORT")
+
+    # Verdict stamp (top-right)
+    stamp = t_label.upper()
+    sw = len(stamp) * 6 + 14
+    bx = PAGE_W - RM - sw
+    _rect_fill(c, bx, PAGE_H - 0.65 * inch, sw, 18, badge_color, radius=3)
+    _rgb(c, WHITE)
+    c.setFont("Helvetica-Bold", 7)
+    c.drawCentredString(bx + sw / 2, PAGE_H - 0.54 * inch, stamp)
+
+    # Report generated timestamp (top-right, below stamp)
+    _rgb(c, T_SEC)
+    c.setFont("Helvetica", 6)
+    c.drawRightString(PAGE_W - RM, PAGE_H - 0.76 * inch, f"Generated: {generated_at}")
+
+    # ── Metadata strip ───────────────────────────────────────────────────────
+    meta_y = PAGE_H - BANNER_H - 0.06 * inch
+    fields = [
+        ("Scan ID",   str(scan_result.get("scan_id", "—"))),
+        ("File",      str(scan_result.get("filename", "—"))[:60]),
+        ("SHA-256",   str(scan_result.get("sha256", "—"))[:52] + "…"),
+        ("Pages",     str(scan_result.get("page_count", "—"))),
+        ("Scanned",   str(scan_result.get("scanned_at") or generated_at)[:30]),
+    ]
+    field_h = 0.175 * inch
+    _rect_fill(c, LM, meta_y - len(fields) * field_h, CONTENT_W, len(fields) * field_h, BG_ELEV)
+    for i, (key, val) in enumerate(fields):
+        ry = meta_y - i * field_h
+        if i % 2 == 1:
+            _rect_fill(c, LM, ry - field_h, CONTENT_W, field_h, BG_CARD)
+        _rgb(c, T_SEC)
+        c.setFont("Helvetica-Bold", 6.5)
+        c.drawString(LM + 4, ry - field_h + 4, key)
+        _rgb(c, T_PRI)
+        c.setFont("Courier", 6.5)
+        c.drawString(LM + 1.1 * inch, ry - field_h + 4, val)
+
+    meta_bottom = meta_y - len(fields) * field_h - 0.06 * inch
+
+    # ── Trust gauge + stat boxes (side by side) ───────────────────────────────
+    gauge_r  = 0.52 * inch
+    gauge_cx = LM + gauge_r + 0.05 * inch
+    gauge_cy = meta_bottom - gauge_r - 0.30 * inch
+    _draw_gauge(c, gauge_cx, gauge_cy, gauge_r, t_score, t_label)
+
+    # Three stat boxes to the right of gauge
+    box_h   = gauge_r * 2 + 0.20 * inch   # match gauge height
+    box_w   = 1.35 * inch
+    box_gap = 0.12 * inch
+    stat_x  = gauge_cx + gauge_r + 0.22 * inch
+
+    hs = fraud.get("high", 0)
+    hs_color = RED_C if hs > 0 else GREEN
+    ai_val   = f"{ai_score:.1f}" if ai_score is not None else "—"
+    ai_color = RED_C if (ai_score or 0) >= 70 else (AMBER if (ai_score or 0) >= 40 else GREEN)
+    ms_val   = f"{match_s:.1f}" if match_s is not None else "—"
+    tot_val  = str(fraud.get("total", 0))
+
+    _stat_box(c, stat_x,                       gauge_cy - box_h / 2, box_w, box_h, str(hs),   "HIGH SIGNALS", hs_color)
+    _stat_box(c, stat_x + box_w + box_gap,     gauge_cy - box_h / 2, box_w, box_h, tot_val,   "TOTAL SIGNALS", AMBER)
+    _stat_box(c, stat_x + 2*(box_w + box_gap), gauge_cy - box_h / 2, box_w, box_h, ai_val,    "AI CONTENT %",  ai_color)
+    _stat_box(c, stat_x + 3*(box_w + box_gap), gauge_cy - box_h / 2, box_w, box_h, ms_val,    "JOB MATCH %",   CYAN_C)
+
+    # Executive briefing snippet (right column, beside gauge area)
+    rec = (narrative.get("recommendation") or "")[:200]
+    if rec:
+        brief_x = stat_x + 4 * (box_w + box_gap) + 0.1 * inch
+        brief_w = PAGE_W - RM - brief_x
+        if brief_w > 0.8 * inch:
+            brief_y_top = gauge_cy + gauge_r + 0.05 * inch
+            _rect_fill(c, brief_x, gauge_cy - gauge_r, brief_w,
+                       brief_y_top - (gauge_cy - gauge_r), BG_ELEV, radius=3)
+            _rect_fill(c, brief_x, brief_y_top - 2, brief_w, 2, badge_color)
+            _rgb(c, badge_color)
+            c.setFont("Helvetica-Bold", 6.5)
+            c.drawString(brief_x + 4, brief_y_top - 10, "RECOMMENDATION")
+            _rgb(c, T_PRI)
+            c.setFont("Helvetica", 6)
+            # Word-wrap the recommendation text
+            words = rec.split()
+            line, lines_out = [], []
+            for w in words:
+                test = " ".join(line + [w])
+                if c.stringWidth(test, "Helvetica", 6) < brief_w - 8:
+                    line.append(w)
+                else:
+                    if line:
+                        lines_out.append(" ".join(line))
+                    line = [w]
+                if len(lines_out) >= 5:
+                    break
+            if line and len(lines_out) < 5:
+                lines_out.append(" ".join(line))
+            for li, ln in enumerate(lines_out):
+                c.drawString(brief_x + 4, brief_y_top - 22 - li * 8, ln)
+
+    section_y = gauge_cy - gauge_r - 0.18 * inch
+
+    # ── Section divider helper ────────────────────────────────────────────────
+    def _section_label(label: str, y: float) -> float:
+        _rgb(c, CYAN_C)
+        c.setFont("Helvetica-Bold", 6.5)
+        c.drawString(LM, y, label)
+        _stroke(c, BORDER)
+        c.setLineWidth(0.4)
+        c.line(LM + c.stringWidth(label, "Helvetica-Bold", 6.5) + 4, y + 2,
+               PAGE_W - RM, y + 2)
+        return y - 0.12 * inch
+
+    # ── Signals table ─────────────────────────────────────────────────────────
+    section_y = _section_label("DETECTED FRAUD SIGNALS", section_y)
+
+    # Budget the available height: reserve space for hidden words if present
+    # and for footer. We compute a max_row count dynamically.
+    FOOTER_RESERVE = BM + 0.15 * inch
+    HW_RESERVE = 0 if not hidden_words else (
+        0.22 * inch + (len(hidden_words[:6]) + 1) * 12 + 0.10 * inch
+    )
+
+    sig_table_h_budget = section_y - FOOTER_RESERVE - HW_RESERVE - 0.20 * inch
+    sig_row_h = 12.0
+    sig_header_h = sig_row_h + 2
+    max_sig_rows = max(0, int((sig_table_h_budget - sig_header_h) / sig_row_h))
+
+    sig_col_w = [
+        0.45 * inch,  # Sev
+        1.20 * inch,  # Type
+        0.28 * inch,  # Pg
+        2.55 * inch,  # Description
+        3.02 * inch,  # Evidence
+    ]
+
+    if signals:
+        sig_rows = []
+        sig_col_colors: dict[int, dict] = {0: {"header": T_SEC, "cells": []}}
+        for ri, s in enumerate(signals):
+            sev = s.get("severity", "low")
+            sev_color = SEV_COLORS.get(sev, T_SEC)
+            sig_col_colors[0]["cells"].append((ri, sev_color))
+            sig_rows.append([
+                sev.upper(),
+                s.get("signal_type", "—").replace("_", " "),
+                str(s.get("page", "—")),
+                s.get("description", "")[:120],
+                (s.get("evidence_text") or "")[:90],
+            ])
+
+        section_y = _draw_mini_table(
+            c, LM, section_y,
+            col_widths=sig_col_w,
+            headers=["SEV", "SIGNAL TYPE", "PG", "DESCRIPTION", "EVIDENCE"],
+            rows=sig_rows,
+            row_h=sig_row_h,
+            font_size=6.5,
+            max_rows=max_sig_rows,
+            col_colors=sig_col_colors,
+        )
+    else:
+        _rgb(c, GREEN)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(LM, section_y - 10, "✓  No fraud signals detected.")
+        section_y -= 18
+
+    section_y -= 0.10 * inch
+
+    # ── Hidden Words table ────────────────────────────────────────────────────
+    if hidden_words:
+        section_y = _section_label("HIDDEN WORDS DETECTED", section_y)
+
+        hw_col_w = [3.40 * inch, 0.40 * inch, 0.65 * inch, 3.05 * inch]
+        hw_rows = []
+        hw_col_colors: dict[int, dict] = {2: {"header": T_SEC, "cells": []}}
+        for ri, hw in enumerate(hidden_words):
+            sev = str(hw.get("severity", "low")).lower()
+            sev_color = SEV_COLORS.get(sev, T_SEC)
+            hw_col_colors[2]["cells"].append((ri, sev_color))
+            hidden_text = str(hw.get("text") or hw.get("hidden_text") or hw.get("word") or "—")
+            hw_rows.append([
+                hidden_text[:80],
+                str(hw.get("page", "—")),
+                sev.upper(),
+                str(hw.get("signal_type") or hw.get("type") or "—").replace("_", " "),
+            ])
+
+        # Remaining height for the hidden words table
+        hw_h_budget = section_y - FOOTER_RESERVE
+        hw_max = max(0, int((hw_h_budget - 14) / 12))
+
+        section_y = _draw_mini_table(
+            c, LM, section_y,
+            col_widths=hw_col_w,
+            headers=["HIDDEN TEXT", "PG", "SEV", "SIGNAL TYPE"],
+            rows=hw_rows,
+            row_h=12.0,
+            font_size=6.5,
+            max_rows=hw_max,
+            col_colors=hw_col_colors,
+        )
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    _stroke(c, BORDER)
+    c.setLineWidth(0.4)
+    c.line(LM, BM, PAGE_W - RM, BM)
+    _rgb(c, T_SEC)
+    c.setFont("Helvetica", 6)
+    c.drawString(LM, BM - 9, "CONFIDENTIAL — FOR AUTHORIZED RECRUITER USE ONLY")
+    c.drawRightString(PAGE_W - RM, BM - 9, "ATS Fraud Detector © 2026  |  Page 1")
+
+    c.showPage()
+    c.save()
+    summary_buf.seek(0)
+
+    # ── Step 2: generate heatmap-annotated resume PDF ─────────────────────────
     with tempfile.TemporaryDirectory() as tmpdir:
         heatmap_path = Path(tmpdir) / "heatmap.pdf"
         generate_heatmap(original_pdf_path, signals, heatmap_path)
-        page_images = render_page_images(heatmap_path, dpi=120)
 
-        # ── 2. Build callbacks ─────────────────────────────────────────────
-        on_first_page  = _make_cover_page(scan_result, generated_at)
-        on_later_pages, _ = _make_header_footer(generated_at)
+        # ── Step 3: merge with fitz ───────────────────────────────────────────
+        # Open the single-page forensic summary from the in-memory buffer
+        summary_doc = fitz.open(stream=summary_buf.read(), filetype="pdf")
+        heatmap_doc = fitz.open(str(heatmap_path))
 
-        doc = SimpleDocTemplate(
-            str(output_path),
-            pagesize=letter,
-            topMargin=TOP_MARGIN,
-            bottomMargin=BOTTOM_MARGIN,
-            leftMargin=LEFT_MARGIN,
-            rightMargin=RIGHT_MARGIN,
-        )
+        # Append heatmap resume pages after the summary page
+        summary_doc.insert_pdf(heatmap_doc)
 
-        # ── 3. Styles ──────────────────────────────────────────────────────
-        styles      = getSampleStyleSheet()
-        body_style  = ParagraphStyle(
-            "Body", parent=styles["BodyText"],
-            fontSize=9, leading=14, textColor=TEXT_PRI,
-        )
-        h2_style    = ParagraphStyle(
-            "H2", parent=styles["Heading2"],
-            fontSize=12, textColor=TEXT_PRI, fontName="Helvetica-Bold",
-            spaceBefore=14, spaceAfter=6,
-        )
-        mono_style  = ParagraphStyle(
-            "Mono", parent=body_style, fontName="Courier", fontSize=8,
-            textColor=TEXT_SEC,
-        )
-        caption_style = ParagraphStyle(
-            "Caption", parent=body_style,
-            fontSize=7.5, textColor=TEXT_SEC, alignment=1,  # centred
-        )
-
-        story: list = []
-
-        # ── 4. Cover page placeholder ──────────────────────────────────────
-        # The actual cover content is drawn by _draw_cover via onFirstPage;
-        # we push the story to page 2 onward.  A tall Spacer reserves the
-        # visible area of page 1 so Platypus doesn't render flowables over it.
-        cover_space_h = PAGE_H - TOP_MARGIN - BOTTOM_MARGIN - 0.5 * inch
-        story.append(Spacer(1, cover_space_h))
-        story.append(PageBreak())
-
-        # ── 5. Executive Forensic Briefing callout ─────────────────────────
-        narrative = scan_result.get("narrative")
-        trust     = scan_result.get("trust_score") or {}
-        t_label   = trust.get("label", "Unknown")
-
-        if narrative:
-            story.append(_briefing_callout(narrative, t_label, body_style))
-            story.append(Spacer(1, 0.25 * inch))
-
-        # ── 6. Severity summary table ──────────────────────────────────────
-        fraud = scan_result.get("fraud_summary", {})
-        story.append(Paragraph("Severity Summary", h2_style))
-        ai_s  = scan_result.get("ai_content_score")
-        ms_s  = scan_result.get("true_match_score")
-        summary_rows = [
-            ["Total", "High", "Medium", "Low", "AI Content", "Match Score"],
-            [
-                str(fraud.get("total", 0)),
-                str(fraud.get("high", 0)),
-                str(fraud.get("medium", 0)),
-                str(fraud.get("low", 0)),
-                f"{ai_s:.1f}" if ai_s is not None else "—",
-                f"{ms_s:.1f}" if ms_s is not None else "—",
-            ],
-        ]
-        summary_tbl = Table(summary_rows, colWidths=[0.9 * inch] * 6)
-        summary_tbl.setStyle(TableStyle([
-            ("BACKGROUND",  (0, 0), (-1, 0), BG_ELEV),
-            ("TEXTCOLOR",   (0, 0), (-1, 0), TEXT_SEC),
-            ("FONTNAME",    (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTNAME",    (0, 1), (-1, 1), "Helvetica-Bold"),
-            ("FONTSIZE",    (0, 0), (-1, -1), 9),
-            ("ALIGN",       (0, 0), (-1, -1), "CENTER"),
-            ("GRID",        (0, 0), (-1, -1), 0.4, BORDER_CLR),
-            ("BACKGROUND",  (0, 1), (-1, 1), BG_CARD),
-            ("TEXTCOLOR",   (1, 1), (1, 1), RED),    # High col
-            ("TEXTCOLOR",   (2, 1), (2, 1), AMBER),  # Medium col
-            ("TEXTCOLOR",   (3, 1), (3, 1), GREEN),  # Low col
-            ("TOPPADDING",  (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.append(summary_tbl)
-        story.append(Spacer(1, 0.3 * inch))
-
-        # ── 7. Signal detail table ─────────────────────────────────────────
-        story.append(Paragraph("Detected Fraud Signals", h2_style))
-
-        if signals:
-            header_row = [
-                Paragraph("<b>Sev</b>", body_style),
-                Paragraph("<b>Signal Type</b>", body_style),
-                Paragraph("<b>Pg</b>", body_style),
-                Paragraph("<b>Description</b>", body_style),
-                Paragraph("<b>Evidence</b>", body_style),
-            ]
-            sig_rows = [header_row]
-            for s in signals:
-                sig_rows.append([
-                    Paragraph(s.get("severity", "—").upper(), body_style),
-                    Paragraph(
-                        s.get("signal_type", "—").replace("_", " "),
-                        body_style,
-                    ),
-                    Paragraph(str(s.get("page", "—")), body_style),
-                    Paragraph(s.get("description", "")[:220], body_style),
-                    Paragraph((s.get("evidence_text") or "")[:120], mono_style),
-                ])
-
-            sig_tbl = Table(
-                sig_rows,
-                colWidths=[0.6 * inch, 1.35 * inch, 0.35 * inch, 2.5 * inch, 1.7 * inch],
-                repeatRows=1,
-            )
-
-            style_cmds = [
-                # Header row
-                ("BACKGROUND",  (0, 0), (-1, 0), BG_ELEV),
-                ("TEXTCOLOR",   (0, 0), (-1, 0), TEXT_SEC),
-                ("FONTNAME",    (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE",    (0, 0), (-1, -1), 8),
-                ("VALIGN",      (0, 0), (-1, -1), "TOP"),
-                ("GRID",        (0, 0), (-1, -1), 0.3, BORDER_CLR),
-                ("TOPPADDING",  (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                # NOSPLIT — keep each body row together
-                ("NOSPLIT",     (0, 1), (-1, -1)),
-            ]
-            for i, s in enumerate(signals, start=1):
-                # Alternating base rows
-                alt_bg = BG_CARD if (i % 2 == 1) else colors.HexColor("#0D0F14")
-                style_cmds.append(("BACKGROUND", (0, i), (-1, i), alt_bg))
-
-                # Severity cell tint overlay on the first column only
-                sev = s.get("severity", "")
-                tint = SEVERITY_ROW_COLORS.get(sev)
-                if tint:
-                    style_cmds.append(("BACKGROUND", (0, i), (0, i), tint))
-                    # Also colour the severity text
-                    txt_color = (RED if sev == "high" else
-                                 AMBER if sev == "medium" else GREEN)
-                    style_cmds.append(("TEXTCOLOR", (0, i), (0, i), txt_color))
-                    style_cmds.append(("FONTNAME",  (0, i), (0, i), "Helvetica-Bold"))
-
-            sig_tbl.setStyle(TableStyle(style_cmds))
-            story.append(sig_tbl)
-        else:
-            story.append(Paragraph("No fraud signals detected.", body_style))
-
-        story.append(Spacer(1, 0.15 * inch))
-
-        # ── 8. Annotated heatmap pages ─────────────────────────────────────
-        if page_images:
-            story.append(PageBreak())
-            story.append(Paragraph("Annotated Heatmap Pages", h2_style))
-            story.append(_heatmap_legend())
-            story.append(Spacer(1, 0.2 * inch))
-            story.append(Paragraph(
-                "The heatmap below shows the original resume with coloured bounding boxes "
-                "drawn at each detected fraud signal's location.",
-                body_style,
-            ))
-            story.append(Spacer(1, 0.1 * inch))
-
-            n_pages = len(page_images)
-            max_width = 6.5 * inch
-            for page_num, png_bytes in enumerate(page_images, start=1):
-                img_buf = io.BytesIO(png_bytes)
-                rl_img = RLImage(img_buf)
-                scale = max_width / rl_img.imageWidth
-                rl_img.drawWidth  = max_width
-                rl_img.drawHeight = rl_img.imageHeight * scale
-
-                caption = Paragraph(
-                    f"Page {page_num} of {n_pages} — annotated heatmap overlay",
-                    caption_style,
-                )
-                story.append(KeepTogether([rl_img, Spacer(1, 0.05 * inch), caption]))
-                story.append(Spacer(1, 0.2 * inch))
-        else:
-            story.append(Spacer(1, 0.15 * inch))
-            story.append(Paragraph(
-                "No renderable pages found for heatmap display.", body_style,
-            ))
-
-        # ── 9. Build the PDF ───────────────────────────────────────────────
-        doc.build(
-            story,
-            onFirstPage=on_first_page,
-            onLaterPages=on_later_pages,
-        )
+        heatmap_doc.close()
+        summary_doc.save(str(output_path), garbage=4, deflate=True)
+        summary_doc.close()
 
     return output_path

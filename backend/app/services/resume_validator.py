@@ -19,7 +19,7 @@ _SECTION_KEYWORDS: tuple[str, ...] = (
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 _PHONE_RE = re.compile(r"(\+?\d[\d\-\s()]{8,}\d)")
 
-MIN_SCORE = 1
+MIN_SCORE = 2          # must match ≥2 resume indicators (keywords + contact signals)
 MIN_WORDS_TO_JUDGE = 15
 
 

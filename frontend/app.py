@@ -928,7 +928,41 @@ with tab_scan:
                 unsafe_allow_html=True,
             )
 
+        # Hidden Words Detected section
+        hidden_words = data.get("hidden_words", []) or []
+        if hidden_words:
+            st.markdown('<div class="section-label">HIDDEN WORDS</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-heading">Hidden Words Detected</div>', unsafe_allow_html=True)
+            hw_rows_html = []
+            for hw in hidden_words:
+                hidden_text = (
+                    hw.get("text") or hw.get("hidden_text") or hw.get("word") or "—"
+                )
+                sev = (hw.get("severity") or "low").lower()
+                sig_type = (hw.get("signal_type") or hw.get("type") or "—").replace("_", " ")
+                pill = f'<span class="pill {esc(sev)}">{esc(sev.upper())}</span>'
+                hw_rows_html.append(
+                    f"<tr>"
+                    f"<td class='mono' style='max-width:260px; word-break:break-all;'>{esc(str(hidden_text)[:160])}</td>"
+                    f"<td style='text-align:center;'>{hw.get('page', '—')}</td>"
+                    f"<td>{pill}</td>"
+                    f"<td class='mono'>{esc(sig_type)}</td>"
+                    f"</tr>"
+                )
+            st.markdown(
+                f"""
+                <table class="ev-table">
+                    <thead><tr>
+                        <th>Hidden Text</th><th>Page</th><th>Severity</th><th>Signal Type</th>
+                    </tr></thead>
+                    <tbody>{''.join(hw_rows_html)}</tbody>
+                </table>
+                """,
+                unsafe_allow_html=True,
+            )
+
         # Report download
+
         st.markdown('<div class="section-label">FORENSIC REPORT</div>', unsafe_allow_html=True)
         scan_id = data["scan_id"]
         c_rep1, c_rep2 = st.columns([1, 2])
