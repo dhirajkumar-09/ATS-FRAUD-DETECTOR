@@ -1,28 +1,33 @@
 """
-forensic_report.py — Phase 4 (single-page forensic summary + heatmap resume)
-=============================================================================
-Generates a professional forensic evidence PDF.
+forensic_report.py — Improved Forensic PDF
+============================================
+Generates a professional, print-ready forensic evidence PDF.
 
 Layout
 ------
-  Page 1  — Forensic Summary drawn entirely on the canvas (guaranteed 1 page).
-             Contains: banner, metadata, trust gauge, KPI stat boxes,
-             severity summary table, fraud signals table (capped/truncated to
-             fit), hidden words table (if present), executive briefing snippet.
+  Page 1  — Forensic Summary (light background, readable fonts, proper margins).
+             Contains: header, metadata, trust gauge, KPI stat boxes,
+             severity summary table, fraud signals table (auto-scaled to fit),
+             hidden words table (if present), footer with page numbers.
 
-  Page 2+ — The heatmap-annotated original resume appended via
-             fitz.insert_pdf().  All original pages preserved in order.
+  Page 2+ — Heatmap-annotated original resume (all original pages preserved).
+             Each page carries a repeating header with scan ID + filename.
 
-Strategy: Page 1 is drawn with pure ReportLab canvas calls, never using
-Platypus flowables that can reflow across pages.  All tables on Page 1 are
-rendered as raw canvas rectangles + text, with automatic row-height scaling
-so the content always fits in the available vertical space.
+Design Goals
+------------
+- Light background (white/near-white) for professional printing
+- Minimum 8pt body text, 9pt section headers
+- Clear visual hierarchy with coloured accent lines
+- No text truncated mid-word — wrapped instead
+- Consistent header/footer on every page with page numbers
+- Margins: 0.62 inch (LM/RM), 0.50 inch (TM/BM)
 
-Uses ReportLab (canvas) + PyMuPDF (fitz) — both already in requirements.txt.
+Uses ReportLab (canvas) + PyMuPDF (fitz).
 """
 from __future__ import annotations
 
 import io
+import textwrap
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,19 +39,21 @@ from reportlab.pdfgen import canvas as rl_canvas
 
 from app.services.heatmap_generator import generate_heatmap
 
-# ── Brand colours ────────────────────────────────────────────────────────────
-GREEN   = (16/255,  185/255, 129/255)   # #10B981
-AMBER   = (245/255, 158/255,  11/255)   # #F59E0B
-RED_C   = (239/255,  68/255,  68/255)   # #EF4444
-CYAN_C  = (  6/255, 182/255, 212/255)   # #06B6D4
+# ── Colour palette (light / print-friendly) ──────────────────────────────────
+# Backgrounds
+BG_PAGE  = (1.0,   1.0,   1.0)       # #FFFFFF — page background
+BG_HDR   = (0.094, 0.094, 0.133)     # #181821 — top header banner
+BG_META  = (0.961, 0.965, 0.973)     # #F5F6F8 — metadata strip
+BG_CARD  = (0.976, 0.980, 0.988)     # #F9FAFE — alternating card rows
+BG_ELEV  = (0.929, 0.937, 0.953)     # #EDF0F3 — elevated / stat boxes
 
-BG_DARK = (13/255,  15/255,  20/255)    # #0D0F14
-BG_CARD = (17/255,  19/255,  24/255)    # #111318
-BG_ELEV = (26/255,  29/255,  38/255)    # #1A1D26
-BORDER  = (42/255,  48/255,  64/255)    # #2A3040
-T_PRI   = (244/255, 245/255, 247/255)   # #F4F5F7
-T_SEC   = (160/255, 166/255, 180/255)   # #A0A6B4
-WHITE   = (1.0, 1.0, 1.0)
+# Accent colours
+TEAL    = (0.235, 0.714, 0.592)      # #3CB697
+GREEN   = (0.094, 0.729, 0.506)      # #18BA81
+AMBER   = (0.878, 0.612, 0.184)      # #E09C2F
+RED_C   = (0.878, 0.322, 0.322)      # #E05252
+CYAN_C  = (0.024, 0.714, 0.831)      # #06B6D4
+PURPLE  = (0.659, 0.333, 0.969)      # #A855F7
 
 TRUST_COLORS = {
     "Verified":  GREEN,
@@ -59,16 +66,37 @@ SEV_COLORS = {
     "low":    GREEN,
 }
 
-PAGE_W, PAGE_H = letter   # 612 × 792 pt
+# Text colours
+T_DARK  = (0.078, 0.082, 0.098)      # #141519 — primary text
+T_MED   = (0.329, 0.353, 0.412)      # #545A69 — secondary text
+T_LIGHT = (0.592, 0.616, 0.675)      # #979CAC — muted / labels
+WHITE   = (1.0, 1.0, 1.0)
+
+BORDER  = (0.816, 0.831, 0.867)      # #D0D4DD — divider lines
+
+# Page dimensions (US Letter: 612 × 792 pt)
+PAGE_W, PAGE_H = letter
+
+# Margins
+LM = 0.62 * inch   # left
+RM = 0.62 * inch   # right
+TM = 0.50 * inch   # top (below banner)
+BM = 0.50 * inch   # bottom (above footer)
+CONTENT_W = PAGE_W - LM - RM   # ≈ 7.26 inch
 
 
-# ── Low-level canvas helpers ─────────────────────────────────────────────────
+# ── Low-level canvas helpers ──────────────────────────────────────────────────
 
 def _rgb(c: rl_canvas.Canvas, color: tuple) -> None:
     c.setFillColorRGB(*color)
 
 def _stroke(c: rl_canvas.Canvas, color: tuple) -> None:
     c.setStrokeColorRGB(*color)
+
+def _fill_stroke(c, fill, stroke=None):
+    c.setFillColorRGB(*fill)
+    if stroke:
+        c.setStrokeColorRGB(*stroke)
 
 def _rect_fill(c, x, y, w, h, color, radius=0):
     _rgb(c, color)
@@ -77,45 +105,97 @@ def _rect_fill(c, x, y, w, h, color, radius=0):
     else:
         c.rect(x, y, w, h, fill=1, stroke=0)
 
+def _divider(c, y: float, color=BORDER):
+    _stroke(c, color)
+    c.setLineWidth(0.35)
+    c.line(LM, y, PAGE_W - RM, y)
+
+
+# ── Gauge (semi-circle) ───────────────────────────────────────────────────────
+
 def _draw_gauge(c, cx: float, cy: float, r: float, score: float, label: str) -> None:
-    """Semi-circular arc gauge."""
-    badge_color = TRUST_COLORS.get(label, T_SEC)
-
-    # Track arc
+    badge_color = TRUST_COLORS.get(label, T_MED)
+    # Track
     _stroke(c, BORDER)
-    c.setLineWidth(7)
+    c.setLineWidth(8)
     c.arc(cx - r, cy - r, cx + r, cy + r, startAng=0, extent=180)
-
-    # Progress arc
+    # Progress
     if score > 0:
         extent = 180.0 * (score / 100.0)
         _stroke(c, badge_color)
-        c.setLineWidth(7)
+        c.setLineWidth(8)
         c.arc(cx - r, cy - r, cx + r, cy + r, startAng=180 - extent, extent=extent)
-
-    # Score number
+    # Score
     _rgb(c, badge_color)
-    c.setFont("Helvetica-Bold", 18)
+    c.setFont("Helvetica-Bold", 20)
     c.drawCentredString(cx, cy + 2, f"{score:.0f}")
-    _rgb(c, T_SEC)
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(cx, cy - 9, "/100")
+    _rgb(c, T_LIGHT)
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(cx, cy - 10, "/100")
     _rgb(c, badge_color)
-    c.setFont("Helvetica-Bold", 7)
-    c.drawCentredString(cx, cy - 20, label.upper())
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(cx, cy - 22, label.upper())
 
 
-def _stat_box(c, x: float, y: float, w: float, h: float,
-              value: str, label: str, color: tuple) -> None:
-    _rect_fill(c, x, y, w, h, BG_ELEV, radius=3)
+# ── Stat box ──────────────────────────────────────────────────────────────────
+
+def _stat_box(c, x, y, w, h, value, label, color):
+    _rect_fill(c, x, y, w, h, BG_ELEV, radius=4)
+    # Top accent line
     _rect_fill(c, x, y + h - 2, w, 2, color)
+    # Value
     _rgb(c, color)
-    c.setFont("Helvetica-Bold", 13)
-    c.drawCentredString(x + w / 2, y + h - 20, value)
-    _rgb(c, T_SEC)
-    c.setFont("Helvetica", 6)
+    c.setFont("Helvetica-Bold", 15)
+    c.drawCentredString(x + w / 2, y + h - 22, value)
+    # Label
+    _rgb(c, T_LIGHT)
+    c.setFont("Helvetica", 7)
     c.drawCentredString(x + w / 2, y + 5, label)
 
+
+# ── Section label ─────────────────────────────────────────────────────────────
+
+def _section_label(c, label: str, y: float) -> float:
+    """Draw a section heading. Returns y coordinate below the label."""
+    _rgb(c, TEAL)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(LM, y, label)
+    label_w = c.stringWidth(label, "Helvetica-Bold", 8)
+    _stroke(c, TEAL)
+    c.setLineWidth(0.5)
+    c.line(LM + label_w + 6, y + 3, PAGE_W - RM, y + 3)
+    return y - 0.14 * inch
+
+
+# ── Word-wrap helper ──────────────────────────────────────────────────────────
+
+def _wrap_text(c, text: str, font: str, size: float, max_w: float, max_lines: int = 3) -> list[str]:
+    """Wrap `text` to fit within `max_w` points at the given font/size."""
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        test = f"{current} {word}".strip()
+        if c.stringWidth(test, font, size) <= max_w:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+        if len(lines) >= max_lines:
+            # Truncate with ellipsis
+            if lines:
+                last = lines[-1]
+                while last and c.stringWidth(last + "…", font, size) > max_w:
+                    last = last[:-1]
+                lines[-1] = last + "…"
+            return lines
+    if current:
+        lines.append(current)
+    return lines[:max_lines]
+
+
+# ── Mini table ────────────────────────────────────────────────────────────────
 
 def _draw_mini_table(
     c,
@@ -123,26 +203,22 @@ def _draw_mini_table(
     col_widths: list[float],
     headers: list[str],
     rows: list[list[str]],
-    row_h: float = 14.0,
-    font_size: float = 7.0,
+    row_h: float = 15.0,
+    font_size: float = 7.5,
     max_rows: int | None = None,
-    col_colors: dict[int, dict[str, tuple]] | None = None,
+    col_colors: dict[int, dict] | None = None,
 ) -> float:
     """
-    Draw a compact table entirely via canvas calls.
-    Returns the y coordinate of the bottom of the table.
-
-    col_colors: {col_index: {"header": color, "cells": [(row_index, color), ...]}}
+    Draw a compact table via canvas calls.
+    Returns the y coordinate of the table bottom.
     """
     if col_colors is None:
         col_colors = {}
 
-    # Clamp rows to max_rows
     display_rows = rows if max_rows is None else rows[:max_rows]
-    truncated = max_rows is not None and len(rows) > max_rows
-
-    total_w = sum(col_widths)
-    header_h = row_h + 2
+    truncated    = max_rows is not None and len(rows) > max_rows
+    total_w      = sum(col_widths)
+    header_h     = row_h + 3
 
     # Header background
     _rect_fill(c, x, y_top - header_h, total_w, header_h, BG_ELEV)
@@ -150,44 +226,47 @@ def _draw_mini_table(
     # Header text
     cx_pos = x
     for ci, (hdr, cw) in enumerate(zip(headers, col_widths)):
-        color = col_colors.get(ci, {}).get("header", T_SEC)
+        color = col_colors.get(ci, {}).get("header", T_MED)
         _rgb(c, color)
         c.setFont("Helvetica-Bold", font_size)
-        c.drawString(cx_pos + 3, y_top - header_h + 4, hdr[:int(cw / (font_size * 0.55))])
+        # Truncate header to fit
+        max_ch = max(1, int(cw / (font_size * 0.54)))
+        c.drawString(cx_pos + 4, y_top - header_h + 5, hdr[:max_ch])
         cx_pos += cw
 
     y = y_top - header_h
 
     for ri, row in enumerate(display_rows):
-        bg = BG_CARD if ri % 2 == 0 else (13/255, 15/255, 20/255)
+        bg = BG_PAGE if ri % 2 == 0 else BG_CARD
         _rect_fill(c, x, y - row_h, total_w, row_h, bg)
 
         cx_pos = x
         for ci, (cell, cw) in enumerate(zip(row, col_widths)):
-            # per-cell colour overrides
             cell_color_map = col_colors.get(ci, {}).get("cells", [])
-            cell_clr = T_PRI
+            cell_clr = T_DARK
             for (r_idx, clr) in cell_color_map:
                 if r_idx == ri:
                     cell_clr = clr
                     break
 
             _rgb(c, cell_clr)
+            # Fit cell text — single line, truncated
             max_chars = max(1, int(cw / (font_size * 0.52)))
             text = str(cell)[:max_chars]
             c.setFont("Helvetica", font_size)
-            c.drawString(cx_pos + 3, y - row_h + 4, text)
+            c.drawString(cx_pos + 4, y - row_h + 5, text)
             cx_pos += cw
 
         y -= row_h
 
     if truncated:
-        _rgb(c, T_SEC)
-        c.setFont("Helvetica-Oblique", 6)
-        c.drawString(x + 3, y - 2, f"… {len(rows) - max_rows} more rows omitted — see full signals list above")
-        y -= 10
+        _rgb(c, T_LIGHT)
+        c.setFont("Helvetica-Oblique", 6.5)
+        c.drawString(x + 4, y - 4,
+                     f"… {len(rows) - max_rows} more rows — see full signals on the heatmap pages")
+        y -= 12
 
-    # Border around entire table
+    # Table border
     _stroke(c, BORDER)
     c.setLineWidth(0.4)
     c.rect(x, y, total_w, y_top - y, fill=0, stroke=1)
@@ -195,7 +274,53 @@ def _draw_mini_table(
     return y
 
 
-# ── Main public function ─────────────────────────────────────────────────────
+# ── Page footer helper ────────────────────────────────────────────────────────
+
+def _draw_footer(c, page_num: int, total_pages: int | None = None,
+                 scan_id: str = "", filename: str = "") -> None:
+    """Draw a consistent footer line on the current canvas page."""
+    fy = BM - 0.12 * inch
+    _divider(c, fy + 6)
+    _rgb(c, T_LIGHT)
+    c.setFont("Helvetica", 6.5)
+    c.drawString(LM, fy, "CONFIDENTIAL — FOR AUTHORIZED RECRUITER USE ONLY")
+    # Page number (right)
+    page_str = f"Page {page_num}" + (f" of {total_pages}" if total_pages else "")
+    c.drawRightString(PAGE_W - RM, fy, f"ATS Fraud Detector  |  {page_str}")
+    # Center: scan ID ref (if provided)
+    if scan_id:
+        c.drawCentredString(PAGE_W / 2, fy, f"Scan #{scan_id}")
+
+
+# ── Heatmap page header helper ────────────────────────────────────────────────
+
+def _stamp_heatmap_header(page: fitz.Page, scan_id: str, filename: str,
+                           page_num: int, total: int) -> None:
+    """
+    Stamp a thin header bar and footer onto a heatmap page using PyMuPDF.
+    Works directly on the fitz page object.
+    """
+    pw = page.rect.width
+    ph = page.rect.height
+    bar_h = 18
+
+    # Header bar
+    page.draw_rect(fitz.Rect(0, 0, pw, bar_h), color=None,
+                   fill=(0.094, 0.094, 0.133))
+    label = f"ATS Fraud Detector — Forensic Heatmap   |   Scan #{scan_id}   |   {filename[:55]}"
+    page.insert_text(fitz.Point(8, bar_h - 5), label,
+                     fontsize=6.5, color=(0.8, 0.85, 0.8))
+
+    # Footer bar
+    footer_y = ph - 14
+    page.draw_rect(fitz.Rect(0, footer_y, pw, ph), color=None,
+                   fill=(0.094, 0.094, 0.133))
+    foot_label = f"Page {page_num} of {total}   |   CONFIDENTIAL"
+    page.insert_text(fitz.Point(8, ph - 4), foot_label,
+                     fontsize=6, color=(0.6, 0.65, 0.6))
+
+
+# ── Main public function ──────────────────────────────────────────────────────
 
 def generate_forensic_report(
     scan_result: dict,
@@ -205,8 +330,8 @@ def generate_forensic_report(
     """
     Build the forensic evidence PDF and write it to output_path.
 
-    Page 1  = Single-page forensic summary (always exactly 1 page).
-    Page 2+ = Heatmap-annotated resume pages (all original pages preserved).
+    Page 1  = Single-page forensic summary.
+    Page 2+ = Heatmap-annotated resume pages (all original pages, with header/footer).
 
     Parameters
     ----------
@@ -219,183 +344,163 @@ def generate_forensic_report(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    trust    = scan_result.get("trust_score") or {}
-    t_score  = float(trust.get("score") or 0)
-    t_label  = trust.get("label", "Unknown")
-    badge_color = TRUST_COLORS.get(t_label, T_SEC)
+    trust       = scan_result.get("trust_score") or {}
+    t_score     = float(trust.get("score") or 0)
+    t_label     = trust.get("label", "Unknown")
+    badge_color = TRUST_COLORS.get(t_label, T_MED)
 
-    fraud    = scan_result.get("fraud_summary", {})
-    signals  = fraud.get("signals", [])
-    ai_score = scan_result.get("ai_content_score")
-    match_s  = scan_result.get("true_match_score")
-    narrative = scan_result.get("narrative") or {}
+    fraud        = scan_result.get("fraud_summary", {})
+    signals      = fraud.get("signals", [])
+    ai_score     = scan_result.get("ai_content_score")
+    match_s      = scan_result.get("true_match_score")
+    narrative    = scan_result.get("narrative") or {}
     hidden_words = scan_result.get("hidden_words", []) or []
+    scan_id      = str(scan_result.get("scan_id", ""))
+    filename     = str(scan_result.get("filename", ""))
 
-    # ── Step 1: draw Page 1 forensic summary via ReportLab canvas ────────────
+    # ── Draw Page 1: Forensic Summary ────────────────────────────────────────
     summary_buf = io.BytesIO()
     c = rl_canvas.Canvas(summary_buf, pagesize=letter)
 
-    LM = 0.5 * inch    # left margin
-    RM = 0.5 * inch    # right margin
-    BM = 0.4 * inch    # bottom margin
-    CONTENT_W = PAGE_W - LM - RM   # 7.5 inch
+    # Fill page background
+    _rect_fill(c, 0, 0, PAGE_W, PAGE_H, BG_PAGE)
 
-    # ── Banner ───────────────────────────────────────────────────────────────
-    BANNER_H = 0.80 * inch
-    _rect_fill(c, 0, PAGE_H - BANNER_H, PAGE_W, BANNER_H, BG_DARK)
-    _rect_fill(c, 0, PAGE_H - BANNER_H, PAGE_W, 2.5, badge_color)  # accent line
+    # ── Header banner ─────────────────────────────────────────────────────────
+    BANNER_H = 0.72 * inch
+    _rect_fill(c, 0, PAGE_H - BANNER_H, PAGE_W, BANNER_H, BG_HDR)
+    # Teal accent stripe at top of banner
+    _rect_fill(c, 0, PAGE_H - 3, PAGE_W, 3, badge_color)
 
-    _rgb(c, T_PRI)
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(LM, PAGE_H - 0.40 * inch, "ATS Fraud Detector")
-    _rgb(c, T_SEC)
-    c.setFont("Helvetica", 9)
-    c.drawString(LM, PAGE_H - 0.60 * inch, "FORENSIC EVIDENCE REPORT")
-
-    # Verdict stamp (top-right)
-    stamp = t_label.upper()
-    sw = len(stamp) * 6 + 14
-    bx = PAGE_W - RM - sw
-    _rect_fill(c, bx, PAGE_H - 0.65 * inch, sw, 18, badge_color, radius=3)
     _rgb(c, WHITE)
-    c.setFont("Helvetica-Bold", 7)
-    c.drawCentredString(bx + sw / 2, PAGE_H - 0.54 * inch, stamp)
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(LM, PAGE_H - 0.36 * inch, "ATS Fraud Detector")
+    _rgb(c, (0.7, 0.75, 0.72))
+    c.setFont("Helvetica", 8)
+    c.drawString(LM, PAGE_H - 0.54 * inch, "FORENSIC EVIDENCE REPORT")
 
-    # Report generated timestamp (top-right, below stamp)
-    _rgb(c, T_SEC)
-    c.setFont("Helvetica", 6)
-    c.drawRightString(PAGE_W - RM, PAGE_H - 0.76 * inch, f"Generated: {generated_at}")
+    # Verdict stamp (top-right inside banner)
+    stamp = t_label.upper()
+    sw = len(stamp) * 6.2 + 16
+    bx = PAGE_W - RM - sw
+    _rect_fill(c, bx, PAGE_H - 0.60 * inch, sw, 20, badge_color, radius=4)
+    _rgb(c, WHITE)
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawCentredString(bx + sw / 2, PAGE_H - 0.48 * inch, stamp)
 
-    # ── Metadata strip ───────────────────────────────────────────────────────
-    meta_y = PAGE_H - BANNER_H - 0.06 * inch
+    # Generated timestamp
+    _rgb(c, (0.55, 0.60, 0.58))
+    c.setFont("Helvetica", 6.5)
+    c.drawRightString(PAGE_W - RM, PAGE_H - 0.68 * inch, f"Generated: {generated_at}")
+
+    # ── Metadata strip ────────────────────────────────────────────────────────
+    FIELD_H = 0.175 * inch
+    meta_y = PAGE_H - BANNER_H - 0.04 * inch
     fields = [
-        ("Scan ID",   str(scan_result.get("scan_id", "—"))),
-        ("File",      str(scan_result.get("filename", "—"))[:60]),
-        ("SHA-256",   str(scan_result.get("sha256", "—"))[:52] + "…"),
-        ("Pages",     str(scan_result.get("page_count", "—"))),
-        ("Scanned",   str(scan_result.get("scanned_at") or generated_at)[:30]),
+        ("Scan ID",  str(scan_result.get("scan_id", "—"))),
+        ("File",     filename[:65]),
+        ("SHA-256",  (str(scan_result.get("sha256", "—"))[:54] + "…") if scan_result.get("sha256") else "—"),
+        ("Pages",    str(scan_result.get("page_count", "—"))),
+        ("Scanned",  str(scan_result.get("scanned_at") or generated_at)[:32]),
     ]
-    field_h = 0.175 * inch
-    _rect_fill(c, LM, meta_y - len(fields) * field_h, CONTENT_W, len(fields) * field_h, BG_ELEV)
+    meta_block_h = len(fields) * FIELD_H
+    _rect_fill(c, 0, meta_y - meta_block_h, PAGE_W, meta_block_h, BG_META)
+
     for i, (key, val) in enumerate(fields):
-        ry = meta_y - i * field_h
-        if i % 2 == 1:
-            _rect_fill(c, LM, ry - field_h, CONTENT_W, field_h, BG_CARD)
-        _rgb(c, T_SEC)
-        c.setFont("Helvetica-Bold", 6.5)
-        c.drawString(LM + 4, ry - field_h + 4, key)
-        _rgb(c, T_PRI)
-        c.setFont("Courier", 6.5)
-        c.drawString(LM + 1.1 * inch, ry - field_h + 4, val)
+        ry = meta_y - i * FIELD_H
+        if i % 2 == 0:
+            _rect_fill(c, 0, ry - FIELD_H, PAGE_W, FIELD_H, BG_CARD)
+        _rgb(c, T_LIGHT)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(LM, ry - FIELD_H + 5, key)
+        _rgb(c, T_DARK)
+        c.setFont("Courier", 7)
+        c.drawString(LM + 1.0 * inch, ry - FIELD_H + 5, val)
 
-    meta_bottom = meta_y - len(fields) * field_h - 0.06 * inch
+    meta_bottom = meta_y - meta_block_h - 0.14 * inch
 
-    # ── Trust gauge + stat boxes (side by side) ───────────────────────────────
-    gauge_r  = 0.52 * inch
+    # ── Trust Gauge + Stat boxes ──────────────────────────────────────────────
+    gauge_r  = 0.50 * inch
     gauge_cx = LM + gauge_r + 0.05 * inch
-    gauge_cy = meta_bottom - gauge_r - 0.30 * inch
+    gauge_cy = meta_bottom - gauge_r - 0.22 * inch
     _draw_gauge(c, gauge_cx, gauge_cy, gauge_r, t_score, t_label)
 
-    # Three stat boxes to the right of gauge
-    box_h   = gauge_r * 2 + 0.20 * inch   # match gauge height
-    box_w   = 1.35 * inch
-    box_gap = 0.12 * inch
-    stat_x  = gauge_cx + gauge_r + 0.22 * inch
+    box_h   = gauge_r * 2 + 0.16 * inch
+    box_w   = 1.30 * inch
+    box_gap = 0.10 * inch
+    stat_x  = gauge_cx + gauge_r + 0.20 * inch
 
-    hs = fraud.get("high", 0)
+    hs       = fraud.get("high", 0)
     hs_color = RED_C if hs > 0 else GREEN
     ai_val   = f"{ai_score:.1f}" if ai_score is not None else "—"
     ai_color = RED_C if (ai_score or 0) >= 70 else (AMBER if (ai_score or 0) >= 40 else GREEN)
     ms_val   = f"{match_s:.1f}" if match_s is not None else "—"
     tot_val  = str(fraud.get("total", 0))
 
-    _stat_box(c, stat_x,                       gauge_cy - box_h / 2, box_w, box_h, str(hs),   "HIGH SIGNALS", hs_color)
-    _stat_box(c, stat_x + box_w + box_gap,     gauge_cy - box_h / 2, box_w, box_h, tot_val,   "TOTAL SIGNALS", AMBER)
-    _stat_box(c, stat_x + 2*(box_w + box_gap), gauge_cy - box_h / 2, box_w, box_h, ai_val,    "AI CONTENT %",  ai_color)
-    _stat_box(c, stat_x + 3*(box_w + box_gap), gauge_cy - box_h / 2, box_w, box_h, ms_val,    "JOB MATCH %",   CYAN_C)
+    _stat_box(c, stat_x,                        gauge_cy - box_h / 2, box_w, box_h, str(hs),  "HIGH SIGNALS",  hs_color)
+    _stat_box(c, stat_x + box_w + box_gap,      gauge_cy - box_h / 2, box_w, box_h, tot_val,  "TOTAL SIGNALS", AMBER)
+    _stat_box(c, stat_x + 2*(box_w + box_gap),  gauge_cy - box_h / 2, box_w, box_h, ai_val,   "AI CONTENT %",  ai_color)
+    _stat_box(c, stat_x + 3*(box_w + box_gap),  gauge_cy - box_h / 2, box_w, box_h, ms_val,   "JOB MATCH %",   CYAN_C)
 
-    # Executive briefing snippet (right column, beside gauge area)
-    rec = (narrative.get("recommendation") or "")[:200]
+    # Executive recommendation (right of stat boxes)
+    rec = (narrative.get("recommendation") or "")[:240]
     if rec:
-        brief_x = stat_x + 4 * (box_w + box_gap) + 0.1 * inch
+        brief_x = stat_x + 4 * (box_w + box_gap) + 0.10 * inch
         brief_w = PAGE_W - RM - brief_x
-        if brief_w > 0.8 * inch:
-            brief_y_top = gauge_cy + gauge_r + 0.05 * inch
-            _rect_fill(c, brief_x, gauge_cy - gauge_r, brief_w,
-                       brief_y_top - (gauge_cy - gauge_r), BG_ELEV, radius=3)
+        if brief_w > 0.7 * inch:
+            brief_y_top = gauge_cy + gauge_r + 0.02 * inch
+            brief_y_bot = gauge_cy - gauge_r
+            _rect_fill(c, brief_x, brief_y_bot, brief_w, brief_y_top - brief_y_bot, BG_ELEV, radius=4)
             _rect_fill(c, brief_x, brief_y_top - 2, brief_w, 2, badge_color)
             _rgb(c, badge_color)
-            c.setFont("Helvetica-Bold", 6.5)
-            c.drawString(brief_x + 4, brief_y_top - 10, "RECOMMENDATION")
-            _rgb(c, T_PRI)
-            c.setFont("Helvetica", 6)
-            # Word-wrap the recommendation text
-            words = rec.split()
-            line, lines_out = [], []
-            for w in words:
-                test = " ".join(line + [w])
-                if c.stringWidth(test, "Helvetica", 6) < brief_w - 8:
-                    line.append(w)
-                else:
-                    if line:
-                        lines_out.append(" ".join(line))
-                    line = [w]
-                if len(lines_out) >= 5:
-                    break
-            if line and len(lines_out) < 5:
-                lines_out.append(" ".join(line))
-            for li, ln in enumerate(lines_out):
-                c.drawString(brief_x + 4, brief_y_top - 22 - li * 8, ln)
+            c.setFont("Helvetica-Bold", 7)
+            c.drawString(brief_x + 5, brief_y_top - 12, "RECOMMENDATION")
+            _rgb(c, T_MED)
+            c.setFont("Helvetica", 6.5)
+            lines = _wrap_text(c, rec, "Helvetica", 6.5, brief_w - 10, max_lines=7)
+            for li, ln in enumerate(lines):
+                c.drawString(brief_x + 5, brief_y_top - 24 - li * 9, ln)
 
-    section_y = gauge_cy - gauge_r - 0.18 * inch
+    section_y = gauge_cy - gauge_r - 0.22 * inch
 
-    # ── Section divider helper ────────────────────────────────────────────────
-    def _section_label(label: str, y: float) -> float:
-        _rgb(c, CYAN_C)
-        c.setFont("Helvetica-Bold", 6.5)
-        c.drawString(LM, y, label)
-        _stroke(c, BORDER)
-        c.setLineWidth(0.4)
-        c.line(LM + c.stringWidth(label, "Helvetica-Bold", 6.5) + 4, y + 2,
-               PAGE_W - RM, y + 2)
-        return y - 0.12 * inch
+    # ── Fraud Signals table ───────────────────────────────────────────────────
+    section_y = _section_label(c, "DETECTED FRAUD SIGNALS", section_y)
 
-    # ── Signals table ─────────────────────────────────────────────────────────
-    section_y = _section_label("DETECTED FRAUD SIGNALS", section_y)
-
-    # Budget the available height: reserve space for hidden words if present
-    # and for footer. We compute a max_row count dynamically.
-    FOOTER_RESERVE = BM + 0.15 * inch
+    FOOTER_RESERVE = BM + 0.18 * inch
     HW_RESERVE = 0 if not hidden_words else (
-        0.22 * inch + (len(hidden_words[:6]) + 1) * 12 + 0.10 * inch
+        0.22 * inch + (min(len(hidden_words), 8) + 1) * 14 + 0.12 * inch
     )
 
-    sig_table_h_budget = section_y - FOOTER_RESERVE - HW_RESERVE - 0.20 * inch
-    sig_row_h = 12.0
-    sig_header_h = sig_row_h + 2
-    max_sig_rows = max(0, int((sig_table_h_budget - sig_header_h) / sig_row_h))
+    sig_budget    = section_y - FOOTER_RESERVE - HW_RESERVE - 0.16 * inch
+    sig_row_h     = 14.0
+    sig_header_h  = sig_row_h + 3
+    max_sig_rows  = max(0, int((sig_budget - sig_header_h) / sig_row_h))
 
     sig_col_w = [
-        0.45 * inch,  # Sev
-        1.20 * inch,  # Type
-        0.28 * inch,  # Pg
-        2.55 * inch,  # Description
-        3.02 * inch,  # Evidence
+        0.44 * inch,   # Sev
+        1.15 * inch,   # Type
+        0.26 * inch,   # Pg
+        2.60 * inch,   # Description
+        2.81 * inch,   # Evidence
     ]
 
     if signals:
-        sig_rows = []
-        sig_col_colors: dict[int, dict] = {0: {"header": T_SEC, "cells": []}}
+        sig_rows: list[list[str]] = []
+        sig_col_colors: dict[int, dict] = {0: {"header": T_MED, "cells": []}}
         for ri, s in enumerate(signals):
-            sev = s.get("severity", "low")
-            sev_color = SEV_COLORS.get(sev, T_SEC)
+            sev = s.get("severity", "low").lower()
+            sev_color = SEV_COLORS.get(sev, T_MED)
             sig_col_colors[0]["cells"].append((ri, sev_color))
+
+            # Evidence: word-wrap to first ~110 chars, no mid-word cut
+            evid_raw = (s.get("evidence_text") or "")
+            evid = " ".join(evid_raw.split()[:22])   # ~110 chars of real words
+
             sig_rows.append([
                 sev.upper(),
                 s.get("signal_type", "—").replace("_", " "),
                 str(s.get("page", "—")),
-                s.get("description", "")[:120],
-                (s.get("evidence_text") or "")[:90],
+                s.get("description", "")[:130],
+                evid,
             ])
 
         section_y = _draw_mini_table(
@@ -404,78 +509,79 @@ def generate_forensic_report(
             headers=["SEV", "SIGNAL TYPE", "PG", "DESCRIPTION", "EVIDENCE"],
             rows=sig_rows,
             row_h=sig_row_h,
-            font_size=6.5,
+            font_size=7.5,
             max_rows=max_sig_rows,
             col_colors=sig_col_colors,
         )
     else:
         _rgb(c, GREEN)
-        c.setFont("Helvetica-Bold", 7)
-        c.drawString(LM, section_y - 10, "✓  No fraud signals detected.")
-        section_y -= 18
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(LM, section_y - 12, "✓  No fraud signals detected.")
+        section_y -= 22
 
-    section_y -= 0.10 * inch
+    section_y -= 0.12 * inch
 
     # ── Hidden Words table ────────────────────────────────────────────────────
     if hidden_words:
-        section_y = _section_label("HIDDEN WORDS DETECTED", section_y)
+        section_y = _section_label(c, "HIDDEN WORDS DETECTED", section_y)
 
-        hw_col_w = [3.40 * inch, 0.40 * inch, 0.65 * inch, 3.05 * inch]
-        hw_rows = []
-        hw_col_colors: dict[int, dict] = {2: {"header": T_SEC, "cells": []}}
+        hw_col_w = [3.30 * inch, 0.38 * inch, 0.62 * inch, 2.96 * inch]
+        hw_rows: list[list[str]] = []
+        hw_col_colors: dict[int, dict] = {2: {"header": T_MED, "cells": []}}
         for ri, hw in enumerate(hidden_words):
             sev = str(hw.get("severity", "low")).lower()
-            sev_color = SEV_COLORS.get(sev, T_SEC)
+            sev_color = SEV_COLORS.get(sev, T_MED)
             hw_col_colors[2]["cells"].append((ri, sev_color))
             hidden_text = str(hw.get("text") or hw.get("hidden_text") or hw.get("word") or "—")
             hw_rows.append([
-                hidden_text[:80],
+                hidden_text[:90],
                 str(hw.get("page", "—")),
                 sev.upper(),
                 str(hw.get("signal_type") or hw.get("type") or "—").replace("_", " "),
             ])
 
-        # Remaining height for the hidden words table
-        hw_h_budget = section_y - FOOTER_RESERVE
-        hw_max = max(0, int((hw_h_budget - 14) / 12))
+        hw_budget = section_y - FOOTER_RESERVE
+        hw_max    = max(0, int((hw_budget - 17) / 14))
 
         section_y = _draw_mini_table(
             c, LM, section_y,
             col_widths=hw_col_w,
             headers=["HIDDEN TEXT", "PG", "SEV", "SIGNAL TYPE"],
             rows=hw_rows,
-            row_h=12.0,
-            font_size=6.5,
+            row_h=14.0,
+            font_size=7.5,
             max_rows=hw_max,
             col_colors=hw_col_colors,
         )
 
     # ── Footer ────────────────────────────────────────────────────────────────
-    _stroke(c, BORDER)
-    c.setLineWidth(0.4)
-    c.line(LM, BM, PAGE_W - RM, BM)
-    _rgb(c, T_SEC)
-    c.setFont("Helvetica", 6)
-    c.drawString(LM, BM - 9, "CONFIDENTIAL — FOR AUTHORIZED RECRUITER USE ONLY")
-    c.drawRightString(PAGE_W - RM, BM - 9, "ATS Fraud Detector © 2026  |  Page 1")
+    _draw_footer(c, page_num=1, scan_id=scan_id, filename=filename)
 
     c.showPage()
     c.save()
     summary_buf.seek(0)
 
-    # ── Step 2: generate heatmap-annotated resume PDF ─────────────────────────
+    # ── Generate heatmap resume pages ─────────────────────────────────────────
     with tempfile.TemporaryDirectory() as tmpdir:
         heatmap_path = Path(tmpdir) / "heatmap.pdf"
         generate_heatmap(original_pdf_path, signals, heatmap_path)
 
-        # ── Step 3: merge with fitz ───────────────────────────────────────────
-        # Open the single-page forensic summary from the in-memory buffer
+        # ── Merge with fitz ───────────────────────────────────────────────────
         summary_doc = fitz.open(stream=summary_buf.read(), filetype="pdf")
         heatmap_doc = fitz.open(str(heatmap_path))
 
-        # Append heatmap resume pages after the summary page
-        summary_doc.insert_pdf(heatmap_doc)
+        # Stamp header + footer on each heatmap page
+        total_pages = 1 + len(heatmap_doc)
+        for i, page in enumerate(heatmap_doc):
+            _stamp_heatmap_header(
+                page,
+                scan_id=scan_id,
+                filename=filename[:55],
+                page_num=i + 2,
+                total=total_pages,
+            )
 
+        summary_doc.insert_pdf(heatmap_doc)
         heatmap_doc.close()
         summary_doc.save(str(output_path), garbage=4, deflate=True)
         summary_doc.close()

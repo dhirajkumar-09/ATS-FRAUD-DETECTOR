@@ -9,7 +9,6 @@ import {
   Search,
   Settings,
   Shield,
-  ChevronRight,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
 import { cn } from '@/lib/utils';
@@ -17,8 +16,9 @@ import { cn } from '@/lib/utils';
 type IconComponent = React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>;
 
 const NAV_ITEMS = [
-  { href: '/dashboard/scan', label: 'Single Scan', icon: ScanLine },
-  { href: '/dashboard/batch', label: 'Batch Scan', icon: LayoutList },
+  { href: '/dashboard/scan',  label: 'Single Scan',   icon: ScanLine  },
+  { href: '/dashboard/batch', label: 'Batch Scan',    icon: LayoutList },
+  { href: '/dashboard/inspect', label: 'Span Inspector', icon: Search },
 ];
 
 const ADMIN_ITEMS = [
@@ -44,87 +44,93 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
         href={href}
         onClick={onClose}
         className={cn(
-          'group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 relative',
+          'group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
           isActive
-            ? 'bg-[#3CB697]/10 text-[#3CB697] border border-[#3CB697]/20'
-            : 'text-[#7A8099] hover:text-[#E8E6DF] hover:bg-[#1E2230]',
+            ? 'text-[#3CB697]'
+            : 'text-[#8A90A4] hover:text-[#E8E6DF] hover:bg-[#1E2230]/70',
         )}
         aria-current={isActive ? 'page' : undefined}
       >
+        {/* Active background */}
         {isActive && (
           <motion.div
             layoutId="sidebar-active"
-            className="absolute inset-0 rounded-lg bg-[#3CB697]/8 border border-[#3CB697]/20"
-            transition={{ type: 'spring', bounce: 0.2, duration: 0.4 }}
+            className="absolute inset-0 rounded-xl bg-[#3CB697]/10 border border-[#3CB697]/20"
+            transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
           />
         )}
-        <Icon
-          size={16}
-          className={cn('relative z-10 transition-colors', isActive ? 'text-[#3CB697]' : 'group-hover:text-[#3CB697]/70')}
-        />
-        <span className="relative z-10 font-medium">{label}</span>
+
+        {/* Left accent line for active item */}
         {isActive && (
-          <ChevronRight size={12} className="relative z-10 ml-auto text-[#3CB697]/50" />
+          <motion.div
+            layoutId="sidebar-accent"
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full bg-[#3CB697]"
+            transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
+          />
         )}
+
+        <Icon
+          size={15}
+          className={cn(
+            'relative z-10 flex-shrink-0 transition-colors',
+            isActive ? 'text-[#3CB697]' : 'group-hover:text-[#3CB697]/60',
+          )}
+        />
+        <span className="relative z-10">{label}</span>
       </Link>
     );
   };
 
   return (
-    <aside className="flex flex-col h-full bg-[#0D0F14] border-r border-[rgba(60,182,151,0.10)] w-64">
+    <aside className="flex flex-col h-full bg-[#0B0D12] border-r border-[rgba(60,182,151,0.08)] w-64">
       {/* Brand */}
-      <div className="flex items-center gap-2.5 px-5 py-6 border-b border-[rgba(60,182,151,0.08)]">
-        <div className="w-8 h-8 rounded-lg bg-[#3CB697]/10 border border-[#3CB697]/20 flex items-center justify-center">
-          <Shield size={16} className="text-[#3CB697]" />
+      <div className="flex items-center gap-3 px-5 py-5 border-b border-[rgba(60,182,151,0.08)]">
+        <div className="w-9 h-9 rounded-xl bg-[#3CB697]/12 border border-[#3CB697]/25 flex items-center justify-center flex-shrink-0">
+          <Shield size={17} className="text-[#3CB697]" />
         </div>
-        <div>
+        <div className="min-w-0">
           <p
-            className="text-sm font-bold text-[#E8E6DF] leading-none"
+            className="text-sm font-bold text-[#E8E6DF] leading-tight tracking-tight"
             style={{ fontFamily: 'var(--font-space-grotesk)' }}
           >
             ATS Fraud
           </p>
-          <p className="text-[10px] text-[#3CB697] font-mono mt-0.5 tracking-widest uppercase">
+          <p className="text-[10px] text-[#3CB697] font-mono tracking-[0.18em] uppercase mt-0.5">
             Detector
           </p>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" aria-label="Main navigation">
-        <p className="px-3 mb-2 text-[10px] font-semibold text-[#7A8099] uppercase tracking-widest">
+      <nav className="flex-1 px-3 py-4 overflow-y-auto" aria-label="Main navigation">
+        <p className="px-3 mb-1.5 text-[10px] font-semibold text-[#8A90A4]/70 uppercase tracking-[0.15em]">
           Forensics
         </p>
-        {NAV_ITEMS.map((item) => (
-          <NavLink key={item.href} {...item} />
-        ))}
-
-        {/* Inspect link — only shows if we have a scan context */}
-        <NavLink
-          href="/dashboard/inspect"
-          label="Span Inspector"
-          icon={Search}
-        />
+        <div className="space-y-0.5">
+          {NAV_ITEMS.map((item) => (
+            <NavLink key={item.href} {...item} />
+          ))}
+        </div>
 
         {user?.is_admin && (
-          <>
-            <div className="pt-4 pb-2">
-              <p className="px-3 mb-2 text-[10px] font-semibold text-[#7A8099] uppercase tracking-widest">
-                Admin
-              </p>
+          <div className="mt-5 pt-4 border-t border-[rgba(60,182,151,0.07)]">
+            <p className="px-3 mb-1.5 text-[10px] font-semibold text-[#8A90A4]/70 uppercase tracking-[0.15em]">
+              Admin
+            </p>
+            <div className="space-y-0.5">
               {ADMIN_ITEMS.map((item) => (
                 <NavLink key={item.href} {...item} />
               ))}
             </div>
-          </>
+          </div>
         )}
       </nav>
 
       {/* Footer org info */}
-      <div className="px-4 py-4 border-t border-[rgba(60,182,151,0.08)]">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-[#3CB697] animate-pulse" />
-          <p className="text-xs text-[#7A8099] truncate">
+      <div className="px-4 py-4 border-t border-[rgba(60,182,151,0.07)]">
+        <div className="flex items-center gap-2.5">
+          <div className="w-1.5 h-1.5 rounded-full bg-[#3CB697] pulse-dot flex-shrink-0" />
+          <p className="text-xs text-[#8A90A4] truncate font-medium">
             {user?.organization ?? 'Unknown org'}
           </p>
         </div>

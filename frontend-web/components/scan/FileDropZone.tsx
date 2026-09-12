@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, FileText, X, AlertCircle } from 'lucide-react';
+import { Upload, FileText, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface FileDropZoneProps {
@@ -12,6 +12,12 @@ interface FileDropZoneProps {
   accept?: string;
   maxMb?: number;
   label?: string;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024)       return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function FileDropZone({
@@ -27,7 +33,7 @@ export default function FileDropZone({
 
   const validate = (f: File): boolean => {
     if (f.size > maxMb * 1024 * 1024) {
-      setError(`File exceeds ${maxMb} MB limit`);
+      setError(`File is too large (${formatBytes(f.size)} — max ${maxMb} MB)`);
       return false;
     }
     if (!f.name.toLowerCase().endsWith('.pdf')) {
@@ -61,37 +67,40 @@ export default function FileDropZone({
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
         className={cn(
-          'relative rounded-xl border-2 border-dashed transition-all duration-300 overflow-hidden',
+          'relative rounded-2xl border-2 border-dashed transition-all duration-300 overflow-hidden',
           dragging
-            ? 'border-[#3CB697] bg-[#3CB697]/5 shadow-[0_0_30px_rgba(60,182,151,0.15)]'
+            ? 'border-[#3CB697] bg-[#3CB697]/6 shadow-[0_0_32px_rgba(60,182,151,0.18),inset_0_0_32px_rgba(60,182,151,0.04)]'
             : file
-            ? 'border-[#3CB697]/40 bg-[#171A22]'
-            : 'border-[rgba(60,182,151,0.2)] bg-[#171A22] hover:border-[#3CB697]/40 hover:bg-[#3CB697]/3',
+            ? 'border-[#3CB697]/35 bg-[#131620]'
+            : 'border-[rgba(60,182,151,0.18)] bg-[#131620] hover:border-[#3CB697]/35 hover:bg-[#131620]',
         )}
       >
         <AnimatePresence mode="wait">
           {file ? (
-            /* ── File selected ── */
+            /* ── File selected state ── */
             <motion.div
               key="file"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="flex items-center gap-4 px-6 py-5"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="flex items-center gap-4 px-5 py-4"
             >
-              <div className="w-10 h-10 rounded-lg bg-[#3CB697]/10 border border-[#3CB697]/20 flex items-center justify-center flex-shrink-0">
-                <FileText size={18} className="text-[#3CB697]" />
+              <div className="w-11 h-11 rounded-xl bg-[#3CB697]/12 border border-[#3CB697]/25 flex items-center justify-center flex-shrink-0">
+                <FileText size={19} className="text-[#3CB697]" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-[#E8E6DF] truncate">{file.name}</p>
-                <p className="text-xs text-[#7A8099] mt-0.5">
-                  {(file.size / 1024).toFixed(0)} KB · PDF
-                </p>
+                <p className="text-sm font-semibold text-[#E8E6DF] truncate">{file.name}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs text-[#8A90A4]">{formatBytes(file.size)}</span>
+                  <span className="text-[#8A90A4]/40 text-xs">·</span>
+                  <span className="text-xs text-[#8A90A4] uppercase tracking-wide">PDF</span>
+                  <CheckCircle2 size={11} className="text-[#3CB697] ml-0.5" />
+                </div>
               </div>
               {onClear && (
                 <button
                   onClick={onClear}
-                  className="p-1.5 rounded-lg hover:bg-[#E05252]/10 text-[#7A8099] hover:text-[#E05252] transition-colors flex-shrink-0"
+                  className="p-1.5 rounded-lg hover:bg-[#E05252]/10 text-[#8A90A4] hover:text-[#E05252] transition-colors flex-shrink-0"
                   aria-label="Remove file"
                 >
                   <X size={14} />
@@ -105,24 +114,46 @@ export default function FileDropZone({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center gap-3 py-12 cursor-pointer"
+              className="flex flex-col items-center justify-center gap-4 py-14 cursor-pointer select-none"
             >
+              {/* Icon with drag animation */}
               <motion.div
-                animate={dragging ? { scale: 1.15 } : { scale: 1 }}
-                transition={{ type: 'spring', stiffness: 300 }}
-                className="w-12 h-12 rounded-xl bg-[#3CB697]/10 border border-[#3CB697]/20 flex items-center justify-center"
+                animate={dragging ? { scale: 1.18, y: -4 } : { scale: 1, y: 0 }}
+                transition={{ type: 'spring', stiffness: 320, damping: 22 }}
+                className={cn(
+                  'w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300',
+                  dragging
+                    ? 'bg-[#3CB697]/20 border-2 border-[#3CB697]/60'
+                    : 'bg-[#1E2230] border border-[rgba(60,182,151,0.2)]',
+                )}
               >
-                <Upload size={20} className="text-[#3CB697]" />
+                <Upload
+                  size={22}
+                  className={cn('transition-colors', dragging ? 'text-[#3CB697]' : 'text-[#8A90A4]')}
+                />
               </motion.div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-[#E8E6DF]">{label}</p>
-                <p className="text-xs text-[#7A8099] mt-1">
-                  PDF only · max {maxMb} MB
+
+              {/* Text */}
+              <div className="text-center px-4">
+                <p className="text-sm font-semibold text-[#E8E6DF]">
+                  {dragging ? 'Release to upload' : label}
+                </p>
+                <p className="text-xs text-[#8A90A4] mt-1">
+                  {dragging ? (
+                    <span className="text-[#3CB697]">Drop it here!</span>
+                  ) : (
+                    <>Drag & drop or click to browse · PDF only · max {maxMb} MB</>
+                  )}
                 </p>
               </div>
-              <span className="px-4 py-1.5 rounded-lg bg-[#3CB697]/10 border border-[#3CB697]/20 text-xs text-[#3CB697] font-medium hover:bg-[#3CB697]/20 transition-colors">
-                Browse files
-              </span>
+
+              {/* Browse button */}
+              {!dragging && (
+                <span className="px-4 py-1.5 rounded-xl bg-[#3CB697]/10 border border-[#3CB697]/22 text-xs text-[#3CB697] font-semibold hover:bg-[#3CB697]/18 hover:border-[#3CB697]/35 transition-all">
+                  Browse files
+                </span>
+              )}
+
               <input
                 type="file"
                 accept={accept}
@@ -135,16 +166,16 @@ export default function FileDropZone({
         </AnimatePresence>
       </div>
 
-      {/* Error */}
+      {/* Error message */}
       <AnimatePresence>
         {error && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="flex items-center gap-2 text-xs text-[#E05252] px-1"
+            className="flex items-center gap-2 text-xs text-[#E05252] px-1 pt-0.5"
           >
-            <AlertCircle size={12} />
+            <AlertCircle size={12} className="flex-shrink-0" />
             {error}
           </motion.div>
         )}

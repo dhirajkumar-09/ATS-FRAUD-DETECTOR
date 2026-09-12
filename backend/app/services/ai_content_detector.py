@@ -319,7 +319,11 @@ def compute_ai_score(text: str, prefer_transformer: bool = False) -> dict:
         try:
             return _transformer_score(text)
         except Exception as exc:
-            pass  # fall through to heuristic
+            import logging as _logging
+            _logging.getLogger(__name__).debug(
+                "Transformer backend failed, falling back to heuristic: %s", exc
+            )
+
 
     return _heuristic_score(text)
 
