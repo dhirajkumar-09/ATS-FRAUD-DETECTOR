@@ -1,19 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import type { Variants } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import {
   Download, Search, Award, Brain, Target,
   Sparkles, FileText, Loader2, ChevronRight,
+  Link, Copy, Check, Trash2, Globe
 } from 'lucide-react';
 import { toast } from 'sonner';
 import TrustGauge from './TrustGauge';
 import FraudSignalList from './FraudSignalList';
 import NarrativeCard from './NarrativeCard';
 import { downloadReport } from '@/lib/api/report';
-import { getBadgeUrl } from '@/lib/api/scan';
+import { getBadgeUrl, createShareLink, revokeShareLink } from '@/lib/api/scan';
+import { getOrgSettings } from '@/lib/api/auth';
 import { useAuthStore } from '@/store/auth';
 import { formatPercent, cn } from '@/lib/utils';
 import type { ScanResult } from '@/lib/types';
@@ -107,6 +109,54 @@ export default function ScanResultPanel({ result }: Props) {
   const [badgeOpen, setBadgeOpen] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [geminiReport, setGeminiReport] = useState<string | null>(null);
+
+  // Candidate Transparency
+  const [transparencyEnabled, setTransparencyEnabled] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(result.share_token || null);
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  useEffect(() => {
+    getOrgSettings().then(s => {
+      setTransparencyEnabled(s.candidate_transparency_enabled);
+    }).catch(() => {});
+  }, []);
+
+  const handleCreateShareLink = async () => {
+    setGeneratingLink(true);
+    try {
+      const newToken = await createShareLink(Number(result.scan_id));
+      setShareToken(newToken);
+      toast.success('Public share link generated');
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      toast.error(err.response?.data?.detail || 'Failed to generate share link');
+    } finally {
+      setGeneratingLink(false);
+    }
+  };
+
+  const handleRevokeShareLink = async () => {
+    try {
+      await revokeShareLink(Number(result.scan_id));
+      setShareToken(null);
+      toast.success('Share link revoked');
+    } catch {
+      toast.error('Failed to revoke link');
+    }
+  };
+
+  const shareUrl = typeof window !== 'undefined' && shareToken 
+    ? `${window.location.origin}/candidate/${shareToken}` 
+    : '';
+
+  const copyToClipboard = () => {
+    if (!shareUrl) return;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+    toast.success('Link copied to clipboard');
+  };
 
   const handleDownload = async () => {
     if (!token) return;
@@ -215,6 +265,37 @@ export default function ScanResultPanel({ result }: Props) {
                 loading={generatingReport}
                 variant="primary"
               />
+              {transparencyEnabled && !shareToken && (
+                <ActionBtn
+                  onClick={handleCreateShareLink}
+                  disabled={generatingLink}
+                  icon={Link}
+                  label={generatingLink ? 'Generating…' : 'Share Link'}
+                  loading={generatingLink}
+                />
+              )}
+              {transparencyEnabled && shareToken && (
+                <div className="flex bg-[#1E2230] border border-[#3CB697]/25 rounded-xl overflow-hidden ml-auto max-w-[280px]">
+                  <div className="px-3 py-2 flex items-center bg-[#3CB697]/10 text-xs text-[#3CB697] font-mono truncate border-r border-[#3CB697]/20 select-none">
+                    <Globe size={12} className="mr-1.5 flex-shrink-0" />
+                    {shareUrl}
+                  </div>
+                  <button
+                    onClick={copyToClipboard}
+                    className="px-3 py-2 text-[#E8E6DF]/70 hover:text-[#E8E6DF] hover:bg-[#252A3B] transition-colors"
+                    title="Copy Link"
+                  >
+                    {copiedLink ? <Check size={14} className="text-[#3CB697]" /> : <Copy size={14} />}
+                  </button>
+                  <button
+                    onClick={handleRevokeShareLink}
+                    className="px-3 py-2 text-[#E05252]/70 hover:text-[#E05252] hover:bg-[#252A3B] transition-colors border-l border-[#3CB697]/20"
+                    title="Revoke Link"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Badge preview */}
@@ -249,7 +330,8 @@ export default function ScanResultPanel({ result }: Props) {
             {[
               { value: 'signals',   label: `Fraud Signals (${result.fraud_signals?.length ?? 0})` },
               { value: 'narrative', label: 'AI Briefing' },
-              { value: 'gemini',    label: 'Gemini Report', icon: Sparkles },
+              { value: 'ai_breakdown', label: 'AI Breakdown' },
+              { value: 'gemini',    label: 'AI Report', icon: Sparkles },
             ].map(({ value, label, icon: TabIcon }) => (
               <TabsTrigger
                 key={value}
@@ -376,6 +458,52 @@ export default function ScanResultPanel({ result }: Props) {
                   </div>
                 </div>
               </motion.div>
+            )}
+          </TabsContent>
+
+          {/* ── AI Breakdown ──────────────────────────────────────────────────────── */}
+          <TabsContent value="ai_breakdown" className="mt-0 outline-none">
+            {result.paragraph_ai_breakdown && result.paragraph_ai_breakdown.length > 0 ? (
+              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                {result.paragraph_ai_breakdown.map((p, i) => {
+                  const score = p.ai_score;
+                  const isHigh = score >= 70;
+                  const isMedium = score >= 40 && score < 70;
+                  const bgClass = isHigh ? 'bg-[#E05252]/10 border-[#E05252]/30 text-[#E05252]' :
+                                 isMedium ? 'bg-[#F59E0B]/10 border-[#F59E0B]/30 text-[#F59E0B]' :
+                                 'bg-[#3CB697]/10 border-[#3CB697]/30 text-[#E8E6DF]';
+
+                  return (
+                    <div key={i} className={`p-4 rounded-xl border ${bgClass} transition-colors`}>
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-semibold uppercase tracking-wider">
+                          Page {p.page} • Paragraph {p.paragraph_index + 1}
+                        </span>
+                        <span className="text-xs font-bold font-mono">
+                          {score.toFixed(1)}% AI
+                        </span>
+                      </div>
+                      <p className="text-sm font-serif leading-relaxed opacity-90">{p.text_snippet}</p>
+                      
+                      {p.contributing_factors && p.contributing_factors.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-current/20">
+                          <span className="text-[10px] font-mono uppercase opacity-70">Contributing Factors:</span>
+                          <ul className="list-disc pl-4 mt-1 text-xs opacity-90">
+                            {p.contributing_factors.map((f, idx) => (
+                              <li key={idx}>{f}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="glass-card rounded-xl p-8 text-center text-sm text-[#7A8099]">
+                <Brain size={24} className="mx-auto mb-3 opacity-50" />
+                No paragraph-level AI breakdown available for this scan.
+              </div>
             )}
           </TabsContent>
         </Tabs>

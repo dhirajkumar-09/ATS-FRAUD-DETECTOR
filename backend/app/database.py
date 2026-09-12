@@ -33,6 +33,19 @@ def init_db():
                         conn.execute(text("ALTER TABLE scan_results ADD COLUMN trust_score FLOAT"))
                     if "trust_label" not in existing_cols:
                         conn.execute(text("ALTER TABLE scan_results ADD COLUMN trust_label VARCHAR(16)"))
+                    if "share_token" not in existing_cols:
+                        conn.execute(text("ALTER TABLE scan_results ADD COLUMN share_token VARCHAR(64)"))
+                    if "share_token_created_at" not in existing_cols:
+                        conn.execute(text("ALTER TABLE scan_results ADD COLUMN share_token_created_at DATETIME"))
+                    conn.commit()
+
+                res2 = conn.execute(text("PRAGMA table_info(org_settings)"))
+                org_cols = {row[1] for row in res2.fetchall()}
+                if org_cols:
+                    if "candidate_transparency_enabled" not in org_cols:
+                        conn.execute(text(
+                            "ALTER TABLE org_settings ADD COLUMN candidate_transparency_enabled BOOLEAN DEFAULT 0"
+                        ))
                     conn.commit()
         except Exception:
             pass
@@ -45,4 +58,3 @@ def get_db():
         yield db
     finally:
         db.close()
-

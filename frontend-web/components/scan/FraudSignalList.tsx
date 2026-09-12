@@ -170,9 +170,31 @@ export default function FraudSignalList({ signals, fraudSummary }: Props) {
                           className="overflow-hidden"
                         >
                           <div className={cn('px-4 pb-4 pt-3 border-t', cfg.border.replace('border-', 'border-t-'))}>
-                            <p className="text-xs text-[#8A90A4] leading-relaxed font-mono">
-                              {sig.detail}
-                            </p>
+                            {sig.signal_type === 'font_substitution' ? (
+                              <div className="space-y-3">
+                                <div className="text-[10px] uppercase tracking-wider text-[#E05252] font-semibold opacity-90">
+                                  Glyph-Swap Attack (Invisible Keyword Stuffing)
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="p-3 bg-[#131620] border border-[rgba(255,255,255,0.05)] rounded-md">
+                                    <span className="text-[9px] text-[#8A90A4] uppercase font-bold block mb-1.5">What you see (Visual)</span>
+                                    <div className="text-xs text-[#E8E6DF] opacity-40 italic">
+                                      [Normal text or blank space]
+                                    </div>
+                                  </div>
+                                  <div className="p-3 bg-[#E05252]/10 border border-[#E05252]/20 rounded-md">
+                                    <span className="text-[9px] text-[#E05252] uppercase font-bold block mb-1.5">What ATS reads (Extracted)</span>
+                                    <div className="text-xs text-[#E8E6DF] font-mono break-words leading-relaxed max-h-[150px] overflow-y-auto custom-scrollbar pr-2">
+                                      {sig.detail}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-[#8A90A4] leading-relaxed font-mono whitespace-pre-wrap">
+                                {sig.detail}
+                              </p>
+                            )}
                           </div>
                         </motion.div>
                       )}

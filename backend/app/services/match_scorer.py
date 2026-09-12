@@ -332,3 +332,66 @@ def spans_to_clean_text(
     clean_text = " ".join(clean_parts)
     clean_wc   = len(re.findall(r"\b[a-zA-Z]+\b", clean_text))
     return clean_text, clean_wc, 0
+
+
+# ── Plagiarism Fingerprinting ────────────────────────────────────────────────
+def _get_ngrams(tokens: list[str], n: int) -> set[tuple[str, ...]]:
+    return set(tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1))
+
+
+def compute_pairwise_similarity(resume_texts: dict[int, str], threshold: float = 80.0) -> list[dict]:
+    """
+    Detect near-duplicate resumes across a batch or organisation.
+    
+    Parameters
+    ----------
+    resume_texts : A mapping from an ID (e.g., scan_id) to the clean extracted text.
+    threshold    : Similarity threshold (0-100) above which pairs are flagged.
+    
+    Returns
+    -------
+    A list of dicts representing matched pairs:
+        [
+            {
+                "id_a": int,
+                "id_b": int,
+                "similarity_score": float,
+                "shared_phrases": list[str]
+            }, ...
+        ]
+    """
+    tokenized = {k: _tokenise(text) for k, text in resume_texts.items()}
+    
+    results = []
+    keys = sorted(list(tokenized.keys()))  # Sort for deterministic pairing
+    
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            id_a = keys[i]
+            id_b = keys[j]
+            tokens_a = tokenized[id_a]
+            tokens_b = tokenized[id_b]
+            
+            cosine = _tf_cosine(tokens_a, tokens_b)
+            score = round(cosine * 100, 1)
+            
+            if score >= threshold:
+                # Extract up to 5 shared 3-grams to serve as evidence
+                ngrams_a = _get_ngrams(tokens_a, 3)
+                ngrams_b = _get_ngrams(tokens_b, 3)
+                shared_ngrams = ngrams_a & ngrams_b
+                
+                shared_phrases = []
+                for ngram in sorted(list(shared_ngrams))[:5]:
+                    shared_phrases.append(" ".join(ngram))
+                    
+                results.append({
+                    "id_a": id_a,
+                    "id_b": id_b,
+                    "similarity_score": score,
+                    "shared_phrases": shared_phrases
+                })
+                
+    # Sort deterministic output (highest similarity first, then by ID)
+    results.sort(key=lambda x: (x["similarity_score"], -x["id_a"], -x["id_b"]), reverse=True)
+    return results

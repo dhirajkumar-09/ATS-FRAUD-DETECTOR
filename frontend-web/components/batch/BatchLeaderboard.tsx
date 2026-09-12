@@ -2,18 +2,19 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react';
+import { ChevronDown, ChevronUp, ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { getTrustColor, getTrustBadgeClass, formatPercent, cn } from '@/lib/utils';
 import ScanResultPanel from '@/components/scan/ScanResultPanel';
-import type { ScanResult } from '@/lib/types';
+import type { ScanResult, DuplicateMatch } from '@/lib/types';
 
 interface Props {
   results: ScanResult[];
+  duplicates?: DuplicateMatch[];
 }
 
 type SortKey = 'trust_score' | 'ai_content_score' | 'true_match_score';
 
-export default function BatchLeaderboard({ results }: Props) {
+export default function BatchLeaderboard({ results, duplicates }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('trust_score');
   const [sortAsc, setSortAsc] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -33,16 +34,16 @@ export default function BatchLeaderboard({ results }: Props) {
     }
   };
 
-  const SortHeader = ({ label, k }: { label: string; k: SortKey }) => (
+  const renderSortHeader = (label: string, k: SortKey) => (
     <button
       onClick={() => toggleSort(k)}
-      className={cn(
-        'flex items-center gap-1 text-xs font-medium uppercase tracking-widest transition-colors',
-        sortKey === k ? 'text-[#3CB697]' : 'text-[#7A8099] hover:text-[#E8E6DF]',
-      )}
+      className="flex items-center gap-1.5 min-w-[80px] text-xs font-semibold text-[#8A90A4] uppercase tracking-wider hover:text-[#E8E6DF] transition-colors"
     >
       {label}
-      <ArrowUpDown size={10} />
+      <div className="flex flex-col -space-y-[3px] opacity-40">
+        <ChevronUp size={10} className={sortKey === k && sortAsc ? 'text-[#3CB697] opacity-100' : ''} />
+        <ChevronDown size={10} className={sortKey === k && !sortAsc ? 'text-[#3CB697] opacity-100' : ''} />
+      </div>
     </button>
   );
 
@@ -51,15 +52,20 @@ export default function BatchLeaderboard({ results }: Props) {
       {/* Sort row */}
       <div className="flex items-center gap-4 px-4 py-2 rounded-lg bg-[#171A22] border border-[rgba(60,182,151,0.08)]">
         <span className="text-xs text-[#7A8099] mr-auto">{results.length} candidates</span>
-        <SortHeader label="Trust" k="trust_score" />
-        <SortHeader label="AI" k="ai_content_score" />
-        <SortHeader label="Match" k="true_match_score" />
+        {renderSortHeader('Trust', 'trust_score')}
+        {renderSortHeader('AI', 'ai_content_score')}
+        {renderSortHeader('Match', 'true_match_score')}
       </div>
 
       {/* Rows */}
       {sorted.map((r, rank) => {
-        const isExpanded = expandedId === r.scan_id;
+        const isExpanded = expandedId === String(r.scan_id);
         const color = getTrustColor(r.trust_label);
+
+        // Find if this candidate is part of a duplicate match
+        const dupMatch = duplicates?.find(
+          (d) => String(d.scan_id_a) === String(r.scan_id) || String(d.scan_id_b) === String(r.scan_id)
+        );
 
         return (
           <motion.div
@@ -67,7 +73,10 @@ export default function BatchLeaderboard({ results }: Props) {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: rank * 0.04 }}
-            className="rounded-xl overflow-hidden border border-[rgba(60,182,151,0.10)] bg-[#171A22]"
+            className={cn(
+              "rounded-xl overflow-hidden border bg-[#171A22] transition-colors",
+              dupMatch ? "border-[#F59E0B]/30" : "border-[rgba(60,182,151,0.10)]"
+            )}
           >
             {/* Row header */}
             <button
@@ -112,10 +121,18 @@ export default function BatchLeaderboard({ results }: Props) {
                 {r.trust_label}
               </span>
 
-              {/* Filename */}
-              <span className="flex-1 text-sm text-[#E8E6DF] truncate min-w-0">
-                {r.filename}
-              </span>
+              {/* Filename and warning */}
+              <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <span className="text-sm text-[#E8E6DF] truncate">
+                  {r.filename}
+                </span>
+                {dupMatch && (
+                  <div className="flex items-center gap-1 mt-0.5 text-[11px] text-[#F59E0B]">
+                    <AlertTriangle size={10} />
+                    <span>{dupMatch.similarity_score}% template reuse detected</span>
+                  </div>
+                )}
+              </div>
 
               {/* Secondary scores */}
               <div className="hidden sm:flex items-center gap-4 flex-shrink-0 text-xs text-[#7A8099]">
@@ -124,9 +141,9 @@ export default function BatchLeaderboard({ results }: Props) {
               </div>
 
               {/* Signals count */}
-              {r.fraud_signals?.length > 0 && (
+              {(r.fraud_signals?.length > 0 || dupMatch) && (
                 <span className="text-[10px] bg-[#E05252]/10 text-[#E05252] border border-[#E05252]/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
-                  {r.fraud_signals.length} flags
+                  {r.fraud_signals?.length ?? 1} flags
                 </span>
               )}
 
@@ -147,7 +164,23 @@ export default function BatchLeaderboard({ results }: Props) {
                   transition={{ duration: 0.25 }}
                   className="overflow-hidden border-t border-[rgba(60,182,151,0.08)]"
                 >
-                  <div className="px-4 py-5">
+                  <div className="px-4 py-5 space-y-4">
+                    {dupMatch && (
+                      <div className="p-4 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/20">
+                        <div className="flex items-center gap-2 text-[#F59E0B] font-semibold mb-2 text-sm">
+                          <AlertTriangle size={16} />
+                          Cross-Resume Plagiarism Detected ({dupMatch.similarity_score}% match)
+                        </div>
+                        <p className="text-xs text-[#E8E6DF] mb-3">
+                          This candidate shares an unusually high amount of text with another applicant in this batch. Shared phrases include:
+                        </p>
+                        <ul className="list-disc pl-5 space-y-1 text-xs text-[#7A8099] font-mono">
+                          {dupMatch.shared_phrases.map((p, i) => (
+                            <li key={i}>{p}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     <ScanResultPanel result={r} />
                   </div>
                 </motion.div>

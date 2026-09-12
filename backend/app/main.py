@@ -24,7 +24,13 @@ init_db()
 logger.info("Database tables and schema ensured.")
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi import Request
+
 app = FastAPI(
+
     title=APP_TITLE,
     version=APP_VERSION,
     description=(
@@ -57,3 +63,15 @@ def root():
 @app.get("/health", tags=["health"])
 def health():
     return {"status": "healthy"}
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content={'detail': exc.errors()}, headers={'Access-Control-Allow-Origin': '*'})
+
+
+
+
+from fastapi.exceptions import HTTPException
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(status_code=exc.status_code, content={'detail': exc.detail}, headers={'Access-Control-Allow-Origin': '*'})
+

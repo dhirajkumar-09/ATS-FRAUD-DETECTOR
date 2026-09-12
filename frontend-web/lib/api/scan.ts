@@ -45,6 +45,7 @@ function transformPostScan(raw: RawPostScanResponse): ScanResult {
     ai_content_score: raw.ai_content?.score ?? 0,
     true_match_score: raw.true_match?.score ?? null,
     narrative:        raw.narrative,
+    paragraph_ai_breakdown: raw.ai_content?.paragraph_ai_breakdown,
   };
 }
 
@@ -70,7 +71,9 @@ function transformGetScan(raw: RawGetScanResponse): ScanResult {
     ai_content_score: raw.ai_content_score ?? 0,
     true_match_score: raw.true_match_score ?? null,
     narrative:        raw.narrative,
+    paragraph_ai_breakdown: raw.ai_content?.paragraph_ai_breakdown,
     created_at:       raw.scanned_at,
+    share_token:      raw.share_token ?? null,
   };
 }
 
@@ -85,9 +88,7 @@ export async function scanSingle(
   if (jobDescription?.trim()) {
     form.append('job_description', jobDescription.trim());
   }
-  const { data } = await apiClient.post<RawPostScanResponse>('/scan', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  const { data } = await apiClient.post<RawPostScanResponse>('/scan', form);
   return transformPostScan(data);
 }
 
@@ -99,18 +100,16 @@ export async function getScan(scanId: string | number): Promise<ScanResult> {
 export async function scanBatch(
   files: File[],
   jobDescription?: string,
-): Promise<ScanResult[]> {
+): Promise<{ results: ScanResult[]; duplicates: import('../types').DuplicateMatch[] }> {
   const form = new FormData();
   files.forEach((f) => form.append('files', f));
   if (jobDescription?.trim()) {
     form.append('job_description', jobDescription.trim());
   }
-  const { data } = await apiClient.post<RawBatchResponse>('/scan/batch', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  const { data } = await apiClient.post<RawBatchResponse>('/scan/batch', form);
 
   // Batch leaderboard items are simplified — convert to ScanResult shape
-  return (data.leaderboard ?? []).map((item) => ({
+  const results = (data.leaderboard ?? []).map((item) => ({
     scan_id:          item.scan_id,
     filename:         item.filename,
     trust_score:      item.trust_score ?? 0,
@@ -127,6 +126,8 @@ export async function scanBatch(
       limitations_disclaimer:  '',
     },
   }));
+
+  return { results, duplicates: data.duplicate_matches ?? [] };
 }
 
 // ── Inspect ───────────────────────────────────────────────────────────────────
@@ -190,3 +191,18 @@ export function getBadgeUrl(scanId: string | number): string {
   const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
   return `${base}/scan/${scanId}/badge.svg`;
 }
+
+export async function createShareLink(scanId: number): Promise<string> {
+  const { data } = await apiClient.post(`/scan/${scanId}/share-link`);
+  return data.share_token;
+}
+
+export async function revokeShareLink(scanId: number): Promise<void> {
+  await apiClient.delete(`/scan/${scanId}/share-link`);
+}
+
+export async function getPublicScanResult(token: string): Promise<unknown> {
+  const { data } = await apiClient.get(`/scan/public/${token}`);
+  return data;
+}
+

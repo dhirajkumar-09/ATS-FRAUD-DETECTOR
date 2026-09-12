@@ -14,6 +14,7 @@ _SECTION_KEYWORDS: tuple[str, ...] = (
     "summary", "profile", "achievements", "publications", "internship",
     "career", "qualifications", "responsibilities", "curriculum vitae",
     "resume", "references", "languages", "awards", "volunteer",
+    "developer", "engineer", "software",
 )
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")

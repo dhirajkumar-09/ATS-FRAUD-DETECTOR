@@ -739,6 +739,34 @@ def detect_timeline_issues(parsed_ranges: list[dict], ref_date: date | None = No
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FONT SUBSTITUTION DETECTOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+def detect_font_substitution(font_glyph_anomalies: list[dict] | None) -> list[SignalDict]:
+    """
+    Catch resumes where an embedded custom/subset font remaps character codes 
+    so that the text looks like one thing visually but the underlying Unicode 
+    encodes different characters (e.g., invisible ATS keyword stuffing).
+    """
+    signals: list[SignalDict] = []
+    if not font_glyph_anomalies:
+        return signals
+
+    for anomaly in font_glyph_anomalies:
+        text = anomaly.get("suspected_extracted_text", "")
+        signals.append({
+            "signal_type":   "font_substitution",
+            "severity":      "high",
+            "page":          anomaly.get("page", 1),
+            "bbox":          anomaly.get("span_bbox"),
+            "description":   f"Suspected glyph-swap attack. The subset font '{anomaly.get('font_name', '')}' extracts as text that does not appear visually.",
+            "evidence_text": text[:200],
+        })
+
+    return signals
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Aggregator
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -751,15 +779,16 @@ def run_all_detectors(
     metadata: dict[str, str] | None = None,
     word_order: list[dict] | None = None,
     image_pages: list[dict] | None = None,
+    font_glyph_anomalies: list[dict] | None = None,
     reference_date: date | None = None,
 ) -> list[SignalDict]:
     """
     Run every detector and return the combined signal list in deterministic order.
     Adding a new detector only requires registering it here.
 
-    `metadata`, `word_order`, and `image_pages` are optional (Phase 5) — pass
+    `metadata`, `word_order`, `image_pages`, and `font_glyph_anomalies` are optional (Phase 5) — pass
     them from pdf_extractor.extract_pdf()'s return dict to enable the
-    metadata-forensics, layer-order, and image-only-page detectors.
+    metadata-forensics, layer-order, image-only-page, and font-substitution detectors.
     """
     signals: list[SignalDict] = []
     signals.extend(detect_zero_width_chars(spans))

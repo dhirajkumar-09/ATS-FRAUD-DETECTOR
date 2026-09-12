@@ -59,12 +59,14 @@ class UserOut(BaseModel):
 class OrgSettingsIn(BaseModel):
     near_white_threshold: int | None = None
     hidden_font_size_pt: float | None = None
+    candidate_transparency_enabled: bool | None = None
 
 
 class OrgSettingsOut(BaseModel):
     organization: str
     near_white_threshold: int | None
     hidden_font_size_pt: float | None
+    candidate_transparency_enabled: bool
 
 
 # ── Register ─────────────────────────────────────────────────────────────────
@@ -131,16 +133,18 @@ def me(current_user: User = Depends(get_current_user)):
 def get_org_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     settings = db.query(OrgSettings).filter_by(organization=current_user.organization).first()
     if settings is None:
-        # No overrides saved yet — report nulls, meaning "use app defaults".
+        # No overrides saved yet - report nulls, meaning "use app defaults".
         return OrgSettingsOut(
             organization=current_user.organization,
             near_white_threshold=None,
             hidden_font_size_pt=None,
+            candidate_transparency_enabled=False,
         )
     return OrgSettingsOut(
         organization=settings.organization,
         near_white_threshold=settings.near_white_threshold,
         hidden_font_size_pt=settings.hidden_font_size_pt,
+        candidate_transparency_enabled=settings.candidate_transparency_enabled,
     )
 
 
@@ -157,6 +161,9 @@ def update_org_settings(
 
     settings.near_white_threshold = payload.near_white_threshold
     settings.hidden_font_size_pt = payload.hidden_font_size_pt
+    if payload.candidate_transparency_enabled is not None:
+        settings.candidate_transparency_enabled = payload.candidate_transparency_enabled
+        
     db.commit()
     db.refresh(settings)
 
@@ -164,4 +171,5 @@ def update_org_settings(
         organization=settings.organization,
         near_white_threshold=settings.near_white_threshold,
         hidden_font_size_pt=settings.hidden_font_size_pt,
+        candidate_transparency_enabled=settings.candidate_transparency_enabled,
     )

@@ -28,6 +28,9 @@ MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", 20 * 1024 * 1024))
 # RGB Euclidean-distance threshold below which text is considered "near-white"
 NEAR_WHITE_THRESHOLD: int = int(os.getenv("NEAR_WHITE_THRESHOLD", 30))
 
+# Plagiarism / Duplicate Fingerprinting threshold (0-100)
+PLAGIARISM_SIMILARITY_THRESHOLD: int = int(os.getenv("PLAGIARISM_SIMILARITY_THRESHOLD", 80))
+
 # Font size (pt) at or below which text is treated as "hidden"
 HIDDEN_FONT_SIZE_PT: float = float(os.getenv("HIDDEN_FONT_SIZE_PT", 1.0))
 

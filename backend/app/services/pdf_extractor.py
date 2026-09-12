@@ -102,8 +102,77 @@ def extract_pdf(file_path: str | Path) -> dict[str, Any]:
         "metadata":    metadata,
         "word_order":  word_order,
         "image_pages": image_pages,
+        "font_glyph_anomalies": _extract_font_glyph_map(spans),
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 4 — Font Substitution / Glyph Swap Detection (Heuristic Fallback)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re
+
+def _extract_font_glyph_map(spans: list[dict]) -> list[dict]:
+    """
+    Heuristic fallback for Font-Substitution / Glyph-Swap detection.
+    True ToUnicode CMap mismatch checks require parsing low-level PDF stream objects,
+    which is brittle. Instead, we flag spans using subset-tagged custom fonts 
+    (e.g., 'ABCDEF+FontName') that contain an unusually high density of 
+    ATS keywords or Unicode Private Use Area (PUA) characters, indicating 
+    likely glyph-swapped invisible stuffing.
+    """
+    anomalies = []
+    
+    ATS_KEYWORDS = {
+        "python", "java", "kubernetes", "aws", "react", "agile", 
+        "leadership", "synergy", "docker", "azure", "sql", "javascript", 
+        "typescript", "scrum", "devops", "c++", "golang", "marketing", "sales"
+    }
+    
+    for span in spans:
+        font_name = span.get("font_name", "")
+        if not font_name or not re.match(r'^[A-Z]{6}\+', font_name):
+            continue
+            
+        text = span.get("text", "")
+        if not text.strip():
+            continue
+            
+        # 1. PUA character check (Common in glyph swaps)
+        pua_count = sum(1 for c in text if 0xE000 <= ord(c) <= 0xF8FF)
+        if pua_count > 0:
+            anomalies.append({
+                "page": span.get("page", 1),
+                "font_name": font_name,
+                "span_bbox": span.get("bbox"),
+                "suspected_visual_text": "[unreadable/pua]",
+                "suspected_extracted_text": text,
+                "confidence": "high",
+            })
+            continue
+            
+        # 2. High ATS keyword density check
+        text_lower = text.lower()
+        words = re.findall(r'\b\w+\b', text_lower)
+        if not words or len(words) < 3:
+            continue
+            
+        keyword_hits = [w for w in words if w in ATS_KEYWORDS]
+        for kw in ["machine learning", "project management", "ci/cd"]:
+            if kw in text_lower:
+                keyword_hits.append(kw)
+                
+        density = len(keyword_hits) / len(words)
+        if density > 0.4 and len(keyword_hits) >= 3:
+            anomalies.append({
+                "page": span.get("page", 1),
+                "font_name": font_name,
+                "span_bbox": span.get("bbox"),
+                "suspected_visual_text": "[visually hidden/swapped]",
+                "suspected_extracted_text": text,
+                "confidence": "medium",
+            })
+
+    return anomalies
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Private helpers — core extraction
@@ -164,7 +233,7 @@ def _extract_with_pymupdf(
 
             raw = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
             page_char_count = 0
-            for block in raw.get("blocks", []):
+            for block_index, block in enumerate(raw.get("blocks", [])):
                 if block.get("type") != 0:   # 0 = text block
                     continue
                 for line in block.get("lines", []):
@@ -195,8 +264,9 @@ def _extract_with_pymupdf(
                                 round(bbox[0], 3), round(bbox[1], 3),
                                 round(bbox[2], 3), round(bbox[3], 3),
                             ),
-                            "page":   page_num,
-                            "origin": "pymupdf",
+                            "page":       page_num,
+                            "block_no":   block_index,
+                            "origin":     "pymupdf",
                         })
 
             # ── Feature 1: PDF layer-order forensics ───────────────────────────
@@ -270,6 +340,7 @@ def _extract_with_pdfplumber(
                         "italic":     False,
                         "bbox":       (x0, y0, x1, y1),
                         "page":       page_num,
+                        "block_no":   0,
                         "origin":     "pdfplumber",
                     }
             if current:

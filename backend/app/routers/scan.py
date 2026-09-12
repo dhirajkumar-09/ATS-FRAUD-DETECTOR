@@ -20,14 +20,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
-from app.config import HIDDEN_FONT_SIZE_PT, MAX_UPLOAD_BYTES, NEAR_WHITE_THRESHOLD, UPLOAD_DIR
+from app.config import HIDDEN_FONT_SIZE_PT, MAX_UPLOAD_BYTES, NEAR_WHITE_THRESHOLD, PLAGIARISM_SIMILARITY_THRESHOLD, UPLOAD_DIR
 from app.database import get_db
-from app.models import FraudSignal, OrgSettings, Resume, ScanResult, TextSpan, User
+from app.models import FraudSignal, OrgSettings, Resume, ScanResult, TextSpan, User, DuplicateMatch
 from app.services.ai_content_detector import compute_ai_score
 from app.services.badge_generator import generate_trust_badge_svg
 from app.services.forensic_narrative import generate_score_narrative
 from app.services.fraud_detectors import run_all_detectors
-from app.services.match_scorer import compute_true_match_score, spans_to_clean_text
+from app.services.match_scorer import compute_true_match_score, compute_pairwise_similarity, spans_to_clean_text
 from app.services.ocr_helper import ocr_page_text
 from app.services.pdf_extractor import extract_pdf
 from app.services.trust_score import compute_trust_score
@@ -148,6 +148,7 @@ def _execute_pdf_scan(
         metadata=extracted.get("metadata"),
         word_order=extracted.get("word_order"),
         image_pages=extracted.get("image_pages"),
+        font_glyph_anomalies=extracted.get("font_glyph_anomalies"),
     )
 
     severity_counts = {"high": 0, "medium": 0, "low": 0}
@@ -192,13 +193,32 @@ def _execute_pdf_scan(
 
     clean_spans = [s for s in extracted["spans"] if _is_clean(s)]
     all_spans   = extracted["spans"]
-    clean_text  = " ".join(s.get("text", "") for s in clean_spans)
+    
+    # Reconstruct text grouping by block_no to preserve paragraphs
+    paragraphs = []
+    current_block = []
+    current_block_no = None
+    for s in clean_spans:
+        b_no = s.get("block_no")
+        if b_no != current_block_no:
+            if current_block:
+                paragraphs.append(" ".join(current_block))
+            current_block = []
+            current_block_no = b_no
+        current_block.append(s.get("text", ""))
+    if current_block:
+        paragraphs.append(" ".join(current_block))
+    
+    clean_text = "\n\n".join(paragraphs)
+    
     total_words = len(re.findall(r"\b[a-zA-Z]+\b", " ".join(s.get("text", "") for s in all_spans)))
     clean_words = len(re.findall(r"\b[a-zA-Z]+\b", clean_text))
     flagged_words = max(0, total_words - clean_words)
 
     # ── AI content score ─────────────────────────────────────────────────────
+    from app.services.ai_content_detector import compute_ai_score, compute_paragraph_ai_scores
     ai_result = compute_ai_score(clean_text)
+    ai_result["paragraph_ai_breakdown"] = compute_paragraph_ai_scores(clean_spans)
     scan.ai_content_score = ai_result["score"]
 
     # ── True Match Score ─────────────────────────────────────────────────────
@@ -243,6 +263,7 @@ def _execute_pdf_scan(
 
     return {
         "scan_id":    scan.id,
+        "share_token": scan.share_token,
         "resume_id":  resume.id,
         "sha256":     sha256,
         "filename":   resume.filename,
@@ -279,6 +300,7 @@ def _execute_pdf_scan(
         "word_order":   extracted.get("word_order", []),
         "image_pages":  image_pages,
         "ocr_results":  ocr_results,
+        "clean_text":   clean_text,
     }
 
 
@@ -365,6 +387,7 @@ async def create_batch_scan(
 
     results: list[dict] = []
     errors: list[dict] = []
+    batch_texts: dict[int, str] = {}
 
     for file in files:
         fname = file.filename or "unknown.pdf"
@@ -398,6 +421,7 @@ async def create_batch_scan(
                 current_user=current_user,
                 db=db,
             )
+            batch_texts[scan_out["scan_id"]] = scan_out["clean_text"]
             results.append({
                 "scan_id": scan_out["scan_id"],
                 "filename": scan_out["filename"],
@@ -416,6 +440,86 @@ async def create_batch_scan(
             logger.warning("Batch scan failed for %s: %s", fname, exc)
             errors.append({"filename": fname, "error": str(exc)})
 
+    # ── Plagiarism / Duplicate Template Fingerprinting ──────────────────────
+    duplicate_matches_out = []
+    if len(batch_texts) > 1:
+        matches = compute_pairwise_similarity(batch_texts, threshold=PLAGIARISM_SIMILARITY_THRESHOLD)
+        
+        affected_scan_ids = set()
+        for match in matches:
+            id_a = match["id_a"]
+            id_b = match["id_b"]
+            
+            # Persist to DB
+            dup_match = DuplicateMatch(
+                scan_result_id_a=id_a,
+                scan_result_id_b=id_b,
+                similarity_score=match["similarity_score"],
+                organization=current_user.organization
+            )
+            db.add(dup_match)
+            
+            # Create fraud signals for both
+            for target_id in (id_a, id_b):
+                other_id = id_b if target_id == id_a else id_a
+                # Find the filename of the other candidate for a better description
+                other_filename = next((r["filename"] for r in results if r["scan_id"] == other_id), "another candidate")
+                
+                fs = FraudSignal(
+                    scan_result_id=target_id,
+                    signal_type="duplicate_template",
+                    severity="high",
+                    page=1,
+                    description=f"Near-duplicate template or copy-pasted content detected. {match['similarity_score']}% similarity with {other_filename}.",
+                    evidence_text=" | ".join(match["shared_phrases"])
+                )
+                db.add(fs)
+                affected_scan_ids.add(target_id)
+                
+            duplicate_matches_out.append({
+                "scan_id_a": id_a,
+                "scan_id_b": id_b,
+                "similarity_score": match["similarity_score"],
+                "shared_phrases": match["shared_phrases"]
+            })
+            
+        if matches:
+            db.commit()
+            
+            # Re-compute trust score for affected scans
+            for s_id in affected_scan_ids:
+                scan = db.query(ScanResult).filter_by(id=s_id).first()
+                if not scan:
+                    continue
+                
+                scan.total_signals += 1
+                scan.high_count += 1
+                
+                fraud_summary_for_score = {
+                    "total": scan.total_signals,
+                    "high": scan.high_count,
+                    "medium": scan.medium_count,
+                    "low": scan.low_count,
+                    "signals": []
+                }
+                trust = compute_trust_score(
+                    fraud_summary=fraud_summary_for_score,
+                    ai_content_score=scan.ai_content_score,
+                    true_match_score=scan.true_match_score
+                )
+                scan.trust_score = trust["score"]
+                scan.trust_label = trust["label"]
+                
+                for r in results:
+                    if r["scan_id"] == s_id:
+                        r["trust_score"] = trust["score"]
+                        r["trust_label"] = trust["label"]
+                        r["trust_emoji"] = trust["emoji"]
+                        r["high_fraud_signals"] = scan.high_count
+                        r["total_fraud_signals"] = scan.total_signals
+                        break
+            db.commit()
+
     # Sort leaderboard by Trust Score descending, then match score descending
     results.sort(key=lambda r: (r["trust_score"], r.get("true_match_score") or 0.0), reverse=True)
 
@@ -425,6 +529,7 @@ async def create_batch_scan(
         "total_failed": len(errors),
         "leaderboard": results,
         "errors": errors,
+        "duplicate_matches": duplicate_matches_out,
     }
 
 
@@ -478,9 +583,27 @@ def get_scan(
         "emoji": {"Verified": "🟢", "Caution": "🟡", "High Risk": "🔴"}.get(scan.trust_label, ""),
     }
 
+    high_bboxes = [sig.bbox for sig in scan.signals if sig.severity == "high" and sig.bbox]
+    def _is_clean(span: dict) -> bool:
+        sb = span.get("bbox")
+        if sb is None: return True
+        for hb in high_bboxes:
+            if sb[0] < hb[2] and sb[2] > hb[0] and sb[1] < hb[3] and sb[3] > hb[1]:
+                return False
+        return True
+    
+    clean_spans = [s for s in all_spans if _is_clean(s)]
+    from app.services.ai_content_detector import compute_paragraph_ai_scores
+    breakdown = compute_paragraph_ai_scores(clean_spans)
+    
+    ai_content = {
+        "score": scan.ai_content_score,
+        "paragraph_ai_breakdown": breakdown
+    }
+
     narrative = generate_score_narrative(
         fraud_summary=fraud_summary,
-        ai_content={"score": scan.ai_content_score},
+        ai_content=ai_content,
         true_match={"score": scan.true_match_score} if scan.true_match_score is not None else None,
         trust_score=trust_dict,
     )
@@ -493,13 +616,15 @@ def get_scan(
         "scanned_at": scan.scanned_at.isoformat() if scan.scanned_at else None,
         "fraud_summary": fraud_summary,
         "signals":     signals_out,
-        "span_count":  len(all_spans),
-        "spans":       _serialise_spans(all_spans),
-        "true_match_score": scan.true_match_score,
         "ai_content_score": scan.ai_content_score,
+        "ai_content":  ai_content,
+        "true_match_score": scan.true_match_score,
         "trust_score": scan.trust_score,
         "trust_label": scan.trust_label,
+        "span_count":  len(all_spans),
+        "spans":       _serialise_spans(all_spans),
         "narrative":   narrative,
+        "share_token": scan.share_token,
     }
 
 
@@ -579,16 +704,14 @@ def inspect_scan(
 def get_scan_badge(
     scan_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
     """
     Generate and serve a crisp SVG Trust Badge for embedding in recruiter portfolios.
+    This endpoint is public so the SVG can be rendered anywhere via an <img> tag.
     """
     scan: ScanResult | None = db.query(ScanResult).filter_by(id=scan_id).first()
     if not scan:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found.")
-    if scan.resume.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="This scan belongs to another account.")
 
     svg_content = generate_trust_badge_svg(
         score=scan.trust_score or 0.0,
@@ -599,6 +722,116 @@ def get_scan_badge(
         media_type="image/svg+xml",
         headers={"Cache-Control": "max-age=3600"},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /scan/{scan_id}/share-link
+# ─────────────────────────────────────────────────────────────────────────────
+import secrets
+from datetime import datetime, timezone
+
+@router.post("/{scan_id}/share-link")
+def create_share_link(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scan: ScanResult | None = db.query(ScanResult).filter_by(id=scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    if scan.resume.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
+    org_settings = db.query(OrgSettings).filter_by(organization=current_user.organization).first()
+    if not org_settings or not org_settings.candidate_transparency_enabled:
+        raise HTTPException(
+            status_code=403, 
+            detail="Candidate Transparency Mode is not enabled for your organization. Please enable it in Settings first."
+        )
+
+    if not scan.share_token:
+        scan.share_token = secrets.token_urlsafe(32)
+        scan.share_token_created_at = datetime.now(timezone.utc)
+        db.commit()
+
+    # We return just the token string, frontend will construct the URL
+    return {"share_token": scan.share_token}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DELETE /scan/{scan_id}/share-link
+# ─────────────────────────────────────────────────────────────────────────────
+@router.delete("/{scan_id}/share-link")
+def revoke_share_link(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scan: ScanResult | None = db.query(ScanResult).filter_by(id=scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    if scan.resume.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
+    scan.share_token = None
+    scan.share_token_created_at = None
+    db.commit()
+    return {"status": "revoked"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /scan/public/{share_token}
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/public/{share_token}")
+def get_public_scan_result(share_token: str, db: Session = Depends(get_db)):
+    """
+    Candidate-facing public endpoint. 
+    NO AUTHENTICATION REQUIRED (rate limiting TODO).
+    Returns a highly redacted view: no bboxes, no evidence strings, no raw spans.
+    """
+    scan: ScanResult | None = db.query(ScanResult).filter_by(share_token=share_token).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Invalid or expired share link.")
+
+    fraud_summary = {
+        "total": scan.total_signals,
+        "high": scan.high_count,
+        "medium": scan.medium_count,
+        "low": scan.low_count,
+    }
+
+    trust_dict = {
+        "score": scan.trust_score,
+        "label": scan.trust_label,
+        "emoji": {"Verified": "🟢", "Caution": "🟡", "High Risk": "🔴"}.get(scan.trust_label, ""),
+    }
+
+    ai_content = {
+        "score": scan.ai_content_score
+    }
+
+    # Generate the standard plain-language narrative
+    narrative = generate_score_narrative(
+        fraud_summary=fraud_summary,
+        ai_content=ai_content,
+        true_match={"score": scan.true_match_score} if scan.true_match_score is not None else None,
+        trust_score=trust_dict,
+    )
+
+    return {
+        "filename": scan.resume.filename,
+        "scanned_at": scan.scanned_at.isoformat() if scan.scanned_at else None,
+        "trust_score": scan.trust_score,
+        "trust_label": scan.trust_label,
+        "ai_content_score": scan.ai_content_score,
+        "true_match_score": scan.true_match_score,
+        "narrative": {
+            "summary": narrative.get("summary", ""),
+            "key_factors": narrative.get("key_factors", []),
+            "recommendation": narrative.get("recommendation", ""),
+            "limitations_disclaimer": "This is an automated forensic summary shared by the hiring organization. Contact them directly with questions."
+        }
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

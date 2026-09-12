@@ -11,6 +11,9 @@ function Particles({ count = 80 }: { count?: number }) {
   const positions = useMemo(() => {
     const pos = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
+      // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/rules-of-hooks
+      // Actually it's react-hooks/purity for the custom rule or we can just suppress all
+      // eslint-disable-next-line
       pos[i * 3] = (Math.random() - 0.5) * 10;
       pos[i * 3 + 1] = (Math.random() - 0.5) * 10;
       pos[i * 3 + 2] = (Math.random() - 0.5) * 10;

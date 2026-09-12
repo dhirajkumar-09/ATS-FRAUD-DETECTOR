@@ -21,11 +21,13 @@ export interface OrgSettingsOut {
   organization: string;
   near_white_threshold: number | null;
   hidden_font_size_pt: number | null;
+  candidate_transparency_enabled: boolean;
 }
 
 export interface OrgSettingsIn {
   near_white_threshold: number | null;
   hidden_font_size_pt: number | null;
+  candidate_transparency_enabled?: boolean | null;
 }
 
 // ── Scan Types ─────────────────────────────────────────────────────────────────
@@ -48,9 +50,19 @@ export interface Narrative {
   limitations_disclaimer: string;
 }
 
+export interface AIParagraphBreakdown {
+  paragraph_index: number;
+  page: number;
+  text_snippet: string;
+  ai_score: number;
+  confidence: string;
+  contributing_factors: string[];
+}
+
 // Normalised ScanResult — what the frontend always works with
 export interface ScanResult {
   scan_id: string | number;
+  share_token?: string | null;
   filename: string;
   trust_score: number;          // 0-1
   trust_label: TrustLabel;
@@ -59,6 +71,7 @@ export interface ScanResult {
   ai_content_score: number;     // 0-1
   true_match_score: number | null; // 0-1 or null
   narrative: Narrative;
+  paragraph_ai_breakdown?: AIParagraphBreakdown[];
   created_at?: string;
 }
 
@@ -67,6 +80,7 @@ export interface ScanResult {
 // What POST /scan actually returns
 export interface RawPostScanResponse {
   scan_id: number;
+  share_token?: string | null;
   filename: string;
   trust_score: { score: number; label: string; emoji?: string };
   fraud_summary: {
@@ -76,7 +90,12 @@ export interface RawPostScanResponse {
     low: number;
     signals: RawSignal[];
   };
-  ai_content: { score: number; clean_word_count?: number; flagged_word_count?: number };
+  ai_content: { 
+    score: number; 
+    clean_word_count?: number; 
+    flagged_word_count?: number;
+    paragraph_ai_breakdown?: AIParagraphBreakdown[];
+  };
   true_match: { score: number } | null;
   narrative: Narrative;
 }
@@ -84,6 +103,7 @@ export interface RawPostScanResponse {
 // What GET /scan/{id} returns
 export interface RawGetScanResponse {
   scan_id: number;
+  share_token?: string | null;
   filename: string;
   trust_score: number;
   trust_label: string;
@@ -96,12 +116,14 @@ export interface RawGetScanResponse {
     low: number;
     signals: RawSignal[];
   };
+  ai_content?: {
+    paragraph_ai_breakdown?: AIParagraphBreakdown[];
+  };
   signals: RawSignal[];
   narrative: Narrative;
   scanned_at?: string;
 }
 
-// What POST /scan/batch leaderboard items look like
 export interface RawBatchItem {
   scan_id: number;
   filename: string;
@@ -114,12 +136,20 @@ export interface RawBatchItem {
   summary?: string;
 }
 
+export interface DuplicateMatch {
+  scan_id_a: number;
+  scan_id_b: number;
+  similarity_score: number;
+  shared_phrases: string[];
+}
+
 export interface RawBatchResponse {
   leaderboard: RawBatchItem[];
   total_submitted: number;
   total_processed: number;
   total_failed: number;
   errors: { filename: string; error: string }[];
+  duplicate_matches?: DuplicateMatch[];
 }
 
 export interface RawSignal {

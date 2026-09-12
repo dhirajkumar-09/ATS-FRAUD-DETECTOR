@@ -21,6 +21,7 @@ const schema = z.object({
     .union([z.literal(''), z.coerce.number().min(0).max(72)])
     .nullable()
     .optional(),
+  candidate_transparency_enabled: z.boolean().optional(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -48,6 +49,7 @@ export default function OrgSettingsForm({ isAdmin }: Props) {
         reset({
           near_white_threshold: s.near_white_threshold ?? '',
           hidden_font_size_pt: s.hidden_font_size_pt ?? '',
+          candidate_transparency_enabled: s.candidate_transparency_enabled,
         });
       })
       .catch(() => toast.error('Failed to load org settings'))
@@ -64,11 +66,13 @@ export default function OrgSettingsForm({ isAdmin }: Props) {
         hidden_font_size_pt: data.hidden_font_size_pt
           ? Number(data.hidden_font_size_pt)
           : null,
+        candidate_transparency_enabled: data.candidate_transparency_enabled,
       });
       setSettings(updated);
       reset({
         near_white_threshold: updated.near_white_threshold ?? '',
         hidden_font_size_pt: updated.hidden_font_size_pt ?? '',
+        candidate_transparency_enabled: updated.candidate_transparency_enabled,
       });
       toast.success('Org settings saved');
     } catch {
@@ -189,6 +193,37 @@ export default function OrgSettingsForm({ isAdmin }: Props) {
               {errors.hidden_font_size_pt.message as string}
             </p>
           )}
+        </div>
+      </div>
+
+      {/* candidate_transparency_enabled */}
+      <div className="rounded-xl bg-[#171A22] border border-[rgba(60,182,151,0.1)] overflow-hidden">
+        <div className="px-5 py-4">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <label className="text-sm font-medium text-[#E8E6DF]" htmlFor="transparency">
+                Candidate Transparency Mode
+              </label>
+              <p className="text-xs text-[#7A8099] mt-1">
+                Allow generating shareable, read-only public links so candidates can view their own score and simplified narrative.
+              </p>
+            </div>
+            {settings?.candidate_transparency_enabled != null && (
+              <span className={cn("text-xs font-mono px-2 py-1 rounded-lg", settings.candidate_transparency_enabled ? "text-[#3CB697] bg-[#3CB697]/10" : "text-[#7A8099] bg-[#1E2230]")}>
+                {settings.candidate_transparency_enabled ? "Enabled" : "Disabled"}
+              </span>
+            )}
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              id="transparency"
+              type="checkbox"
+              disabled={!isAdmin}
+              {...register('candidate_transparency_enabled')}
+              className="w-4 h-4 rounded border-[rgba(60,182,151,0.3)] bg-[#0D0F14] text-[#3CB697] focus:ring-[#3CB697]/30 focus:ring-offset-0 cursor-pointer disabled:opacity-50"
+            />
+            <span className={cn("text-sm", !isAdmin && "opacity-60")}>Enable public share links</span>
+          </label>
         </div>
       </div>
 

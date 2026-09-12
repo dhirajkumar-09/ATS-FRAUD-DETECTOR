@@ -53,6 +53,7 @@ class OrgSettings(Base):
     organization        = Column(String(256), nullable=False, unique=True, index=True)
     near_white_threshold = Column(Integer, nullable=True)   # None → use config default
     hidden_font_size_pt  = Column(Float, nullable=True)     # None → use config default
+    candidate_transparency_enabled = Column(Boolean, default=False)
     updated_at          = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
@@ -94,7 +95,11 @@ class ScanResult(Base):
 
     # Phase 5 — composite Trust Score badge
     trust_score  = Column(Float, nullable=True)   # 0-100
-    trust_label  = Column(String(16), nullable=True)   # Verified | Caution | High Risk
+    trust_label  = Column(String(32), nullable=True)   # Verified | Caution | High Risk
+
+    # Share link fields
+    share_token  = Column(String(64), unique=True, nullable=True, index=True)
+    share_token_created_at = Column(DateTime, nullable=True)
 
     resume  = relationship("Resume", back_populates="scan_result")
     signals = relationship("FraudSignal", back_populates="scan_result",
@@ -131,6 +136,22 @@ class FraudSignal(Base):
     @property
     def bbox(self):
         return (self.bbox_x0, self.bbox_y0, self.bbox_x1, self.bbox_y1)
+
+
+# ── DuplicateMatch ─────────────────────────────────────────────────────────────
+class DuplicateMatch(Base):
+    """Stores near-duplicate template reuse matches across resumes."""
+    __tablename__ = "duplicate_matches"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    scan_result_id_a = Column(Integer, ForeignKey("scan_results.id"), nullable=False, index=True)
+    scan_result_id_b = Column(Integer, ForeignKey("scan_results.id"), nullable=False, index=True)
+    similarity_score = Column(Float, nullable=False)
+    organization     = Column(String(256), nullable=False, index=True)
+    detected_at      = Column(DateTime, default=_utcnow)
+
+    scan_a = relationship("ScanResult", foreign_keys=[scan_result_id_a])
+    scan_b = relationship("ScanResult", foreign_keys=[scan_result_id_b])
 
 
 # ── TextSpan ─────────────────────────────────────────────────────────────────

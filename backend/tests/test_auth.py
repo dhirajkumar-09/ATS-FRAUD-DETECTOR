@@ -22,6 +22,12 @@ from app.main import app
 @pytest.fixture(scope="module")
 def client():
     Base.metadata.create_all(bind=engine)
+    from app.database import SessionLocal
+    from app.models import User
+    db = SessionLocal()
+    db.query(User).filter(User.email.like("%recruiter-tests.com")).delete()
+    db.commit()
+    db.close()
     return TestClient(app)
 
 

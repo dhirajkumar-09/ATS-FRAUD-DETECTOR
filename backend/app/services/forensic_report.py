@@ -521,6 +521,45 @@ def generate_forensic_report(
 
     section_y -= 0.12 * inch
 
+    # ── AI Paragraph Breakdown table ─────────────────────────────────────────
+    ai_paragraphs = (scan_result.get("ai_content") or {}).get("paragraph_ai_breakdown", [])
+    high_ai_paragraphs = [p for p in ai_paragraphs if p.get("ai_score", 0) >= 40]
+    high_ai_paragraphs.sort(key=lambda p: p.get("ai_score", 0), reverse=True)
+    
+    if high_ai_paragraphs:
+        section_y = _section_label(c, "AI CONTENT FLAG (TOP PARAGRAPHS)", section_y)
+        
+        ai_col_w = [0.44 * inch, 4.4 * inch, 2.42 * inch]
+        ai_rows: list[list[str]] = []
+        ai_col_colors: dict[int, dict] = {0: {"header": T_MED, "cells": []}}
+        
+        for ri, p in enumerate(high_ai_paragraphs[:3]):
+            score = p.get("ai_score", 0)
+            ai_color = RED_C if score >= 70 else AMBER
+            ai_col_colors[0]["cells"].append((ri, ai_color))
+            
+            snippet = (p.get("text_snippet") or "").replace('\n', ' ')
+            snippet = " ".join(snippet.split()[:20]) # ~100 chars
+            factors = ", ".join(p.get("contributing_factors", []))
+            
+            ai_rows.append([
+                f"{score:.1f}%",
+                f"Page {p.get('page', 1)}: {snippet}...",
+                factors[:65]
+            ])
+            
+        section_y = _draw_mini_table(
+            c, LM, section_y,
+            col_widths=ai_col_w,
+            headers=["SCORE", "TEXT SNIPPET", "FLAGGED FACTORS"],
+            rows=ai_rows,
+            row_h=14.0,
+            font_size=7.5,
+            max_rows=3,
+            col_colors=ai_col_colors,
+        )
+        section_y -= 0.12 * inch
+
     # ── Hidden Words table ────────────────────────────────────────────────────
     if hidden_words:
         section_y = _section_label(c, "HIDDEN WORDS DETECTED", section_y)

@@ -80,6 +80,16 @@ def generate_score_narrative(
             factors.append(
                 f"AI Content Index is low ({ai_score:.1f}/100), consistent with natural, human-authored writing."
             )
+            
+        paragraphs = (ai_content or {}).get("paragraph_ai_breakdown", [])
+        if paragraphs:
+            most_suspicious = max(paragraphs, key=lambda p: p.get("ai_score", 0), default=None)
+            if most_suspicious and most_suspicious.get("ai_score", 0) >= 70:
+                snippet = most_suspicious.get("text_snippet", "")[:40].replace('\n', ' ').strip()
+                factors.append(
+                    f"A paragraph on page {most_suspicious.get('page', 1)} starting with '{snippet}...' "
+                    f"scores {most_suspicious['ai_score']:.1f}% likely AI-generated."
+                )
 
     # 3. Match score narration
     if true_match:
@@ -120,12 +130,18 @@ def generate_score_narrative(
         f"Candidate received a composite Trust Score of {score:.1f}/100 ({label}). "
         + (" ".join(factors[:2]))
     )
+    
+    font_sub_flag = any(s.get("signal_type") == "font_substitution" for s in signals)
+    if font_sub_flag:
+        factors.insert(0, "This resume uses a manipulated font mapping to hide keywords from human readers while exposing them to ATS text extraction — a deliberate deception technique.")
 
     limitations = (
         "Forensic Note: Fraud signals reflect deterministic document structure anomalies (Unicode codepoints, "
         "color vectors, content streams). AI-content scoring is heuristic and probabilistic — treat elevated AI scores "
         "as an investigative signal rather than absolute proof of authorship."
     )
+    if font_sub_flag:
+        limitations += " Additionally, Font Substitution detection currently uses a heuristic based on high ATS keyword density in subset fonts; true CMap validation is a best-effort approximation."
 
     return {
         "verdict_title": verdict_title,

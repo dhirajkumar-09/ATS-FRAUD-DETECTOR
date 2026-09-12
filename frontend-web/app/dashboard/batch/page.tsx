@@ -8,13 +8,14 @@ import BatchDropZone from '@/components/batch/BatchDropZone';
 import BatchLeaderboard from '@/components/batch/BatchLeaderboard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { scanBatch } from '@/lib/api/scan';
-import type { ScanResult } from '@/lib/types';
+import type { ScanResult, DuplicateMatch } from '@/lib/types';
 
 export default function BatchPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [jobDescription, setJobDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<ScanResult[] | null>(null);
+  const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([]);
 
   const addFiles = (incoming: File[]) => {
     setFiles((prev) => [...prev, ...incoming]);
@@ -28,10 +29,12 @@ export default function BatchPage() {
     if (files.length === 0) return;
     setLoading(true);
     setResults(null);
+    setDuplicates([]);
     try {
       const res = await scanBatch(files, jobDescription);
-      setResults(res);
-      toast.success(`Batch complete — ${res.length} candidates ranked`);
+      setResults(res.results);
+      setDuplicates(res.duplicates);
+      toast.success(`Batch complete — ${res.results.length} candidates ranked`);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -150,7 +153,7 @@ export default function BatchPage() {
                 Clear results
               </button>
             </div>
-            <BatchLeaderboard results={results} />
+            <BatchLeaderboard results={results} duplicates={duplicates} />
           </motion.div>
         )}
       </AnimatePresence>

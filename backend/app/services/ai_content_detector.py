@@ -285,6 +285,67 @@ def _transformer_score(text: str) -> dict:
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+def compute_paragraph_ai_scores(full_text: str | list[dict]) -> list[dict]:
+    """
+    Score individual paragraphs for AI-likelihood.
+    
+    If full_text is a list of spans from pdf_extractor, we group by (page, block_no) 
+    to preserve page mapping. If it's a string, we split by blank lines.
+    """
+    paragraphs = []
+    
+    if isinstance(full_text, list):
+        blocks = {}
+        for s in full_text:
+            k = (s.get("page", 1), s.get("block_no", 0))
+            blocks.setdefault(k, []).append(s.get("text", ""))
+        
+        for i, (k, texts) in enumerate(blocks.items()):
+            paragraphs.append({
+                "index": i,
+                "page": k[0],
+                "text": " ".join(texts).strip()
+            })
+    else:
+        for i, text in enumerate(full_text.split('\n\n')):
+            if text.strip():
+                paragraphs.append({
+                    "index": i,
+                    "page": 1,
+                    "text": text.strip()
+                })
+
+    results = []
+    for p in paragraphs:
+        text = p["text"]
+        words = _words(text)
+        if len(words) < 15:
+            continue
+            
+        sentences = _sentences(text)
+        uniformity = _sentence_uniformity_score(sentences)
+        phrase_dens = _ai_phrase_density_score(text, len(words))
+        repetition = _bigram_repetition_score(words)
+        
+        raw = 0.45 * uniformity + 0.40 * phrase_dens + 0.15 * repetition
+        score = round(min(100.0, raw * 100), 1)
+        
+        factors = []
+        if uniformity > 0.5: factors.append("unusually uniform sentence length")
+        if phrase_dens > 0.3: factors.append("high AI-phrase density")
+        if repetition > 0.3: factors.append("repetitive word pairs (bigrams)")
+        
+        results.append({
+            "paragraph_index": p["index"],
+            "page": p["page"],
+            "text_snippet": text[:200] + "..." if len(text) > 200 else text,
+            "ai_score": score,
+            "confidence": "high" if len(words) > 40 else "medium" if len(words) > 20 else "low",
+            "contributing_factors": factors
+        })
+        
+    return results
+
 def compute_ai_score(text: str, prefer_transformer: bool = False) -> dict:
     """
     Compute the "likely AI-written" score for a block of text.
