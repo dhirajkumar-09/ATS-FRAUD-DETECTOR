@@ -350,8 +350,29 @@ export default function ScanResultPanel({ result }: Props) {
 
                 {/* Report body */}
                 <div className="px-5 py-5 max-h-[520px] overflow-y-auto">
-                  <div className="prose prose-sm prose-invert max-w-none text-[#E8E6DF]/80 text-sm leading-7 whitespace-pre-wrap">
-                    {geminiReport}
+                  <div className="prose prose-sm prose-invert max-w-none text-[#E8E6DF]/80 text-sm leading-7">
+                    {geminiReport.split('\n').map((line, i) => {
+                      if (line.startsWith('## ')) {
+                        return <h3 key={i} className="text-base font-bold text-[#3CB697] mt-5 mb-2">{line.slice(3)}</h3>;
+                      }
+                      if (line.startsWith('# ')) {
+                        return <h2 key={i} className="text-lg font-bold text-[#E8E6DF] mt-6 mb-3">{line.slice(2)}</h2>;
+                      }
+                      if (line.startsWith('* ') || line.startsWith('- ')) {
+                        return (
+                          <div key={i} className="flex gap-2.5 mb-1.5 ml-1">
+                            <span className="text-[#3CB697] font-bold mt-0.5">•</span>
+                            <span dangerouslySetInnerHTML={{ __html: line.slice(2).replace(/\*\*(.+?)\*\*/g, '<strong class="text-[#E8E6DF] font-semibold">$1</strong>').replace(/`(.+?)`/g, '<code class="text-[#3CB697] bg-[#3CB697]/10 px-1 py-0.5 rounded text-[11px] font-mono">$1</code>') }} />
+                          </div>
+                        );
+                      }
+                      if (line.trim() === '' || line.trim() === '---') {
+                        return <div key={i} className="h-2" />;
+                      }
+                      return (
+                        <p key={i} className="mb-2" dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.+?)\*\*/g, '<strong class="text-[#E8E6DF] font-semibold">$1</strong>').replace(/`(.+?)`/g, '<code class="text-[#3CB697] bg-[#3CB697]/10 px-1 py-0.5 rounded text-[11px] font-mono">$1</code>') }} />
+                      );
+                    })}
                   </div>
                 </div>
               </motion.div>

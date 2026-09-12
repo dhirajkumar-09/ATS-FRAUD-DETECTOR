@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Bot, X, Send, Loader2, Sparkles, ChevronDown,
-  Copy, Check, AlertCircle,
+  Copy, Check, AlertCircle, MessageCircle
 } from 'lucide-react';
 import { sendChatMessage, buildScanContext, type ChatMessage } from '@/lib/gemini';
 import type { ScanResult } from '@/lib/types';
@@ -14,7 +14,7 @@ interface Props {
   scanResult?: ScanResult | null;
 }
 
-const WELCOME = `Hi! I'm your AI forensic analyst powered by Gemini.
+const WELCOME = `Hi! I'm your AI forensic analyst.
 
 I can help you:
 • **Interpret** scan results and fraud signals
@@ -160,7 +160,7 @@ export default function AIAssistant({ scanResult }: Props) {
             </motion.div>
           ) : (
             <motion.div key="bot" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}>
-              <Sparkles size={22} />
+              <MessageCircle size={22} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -191,7 +191,7 @@ export default function AIAssistant({ scanResult }: Props) {
                   AI Forensic Analyst
                 </p>
                 <p className="text-[10px] text-[#3CB697] font-mono">
-                  {scanResult ? `Analyzing: ${scanResult.filename}` : 'Powered by Gemini'}
+                  {scanResult ? `Analyzing: ${scanResult.filename}` : 'Powered by AI'}
                 </p>
               </div>
               <div className="flex items-center gap-1">
@@ -230,7 +230,7 @@ export default function AIAssistant({ scanResult }: Props) {
                       >
                         {msg.role === 'model' && (
                           <div className="w-6 h-6 rounded-full bg-[#3CB697]/15 border border-[#3CB697]/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                            <Sparkles size={10} className="text-[#3CB697]" />
+                            <Bot size={12} className="text-[#3CB697]" />
                           </div>
                         )}
                         <div
