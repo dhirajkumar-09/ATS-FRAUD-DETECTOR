@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
+import { useEffect, useState } from 'react';
+import { motion, useMotionValue, animate } from 'framer-motion';
 import { getTrustColor } from '@/lib/utils';
 import type { TrustLabel } from '@/lib/types';
 
@@ -25,7 +25,6 @@ export default function TrustGauge({ score: rawScore, label, size = 160 }: Trust
     : Math.max(0, Math.min(1, rawScore));
   const color = getTrustColor(label);
   const motionScore = useMotionValue(0);
-  const displayValue = useTransform(motionScore, (v) => Math.round(v * 100));
   const [displayNum, setDisplayNum] = useState(0);
 
   useEffect(() => {

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronUp, ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { getTrustColor, getTrustBadgeClass, formatPercent, cn } from '@/lib/utils';
 import ScanResultPanel from '@/components/scan/ScanResultPanel';
 import type { ScanResult, DuplicateMatch } from '@/lib/types';

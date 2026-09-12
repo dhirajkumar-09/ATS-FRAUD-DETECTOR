@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X, ScanLine, LayoutList, Search, Settings } from 'lucide-react';
+import { Menu, X, ScanLine, LayoutList, Search, Settings, Rocket, History, LayoutDashboard, Shield } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
 import { getMe } from '@/lib/api/auth';
@@ -13,10 +13,13 @@ import AIAssistant from '@/components/ai/AIAssistant';
 
 // ── Page title map ───────────────────────────────────────────────────────────
 const PAGE_META: Record<string, { title: string; icon: LucideIcon; description: string }> = {
+  '/dashboard':          { title: 'Overview',       icon: LayoutDashboard, description: 'Recruiter hub, recent scans, and audit metrics' },
   '/dashboard/scan':     { title: 'Single Scan',    icon: ScanLine,   description: 'Forensic analysis of one resume PDF' },
   '/dashboard/batch':    { title: 'Batch Scan',     icon: LayoutList, description: 'Scan and rank multiple resumes at once' },
   '/dashboard/inspect':  { title: 'Span Inspector', icon: Search,     description: 'Deep-dive into text spans and metadata' },
+  '/dashboard/history':  { title: 'Scan History',   icon: History,    description: 'Past forensic audits and scan logs' },
   '/dashboard/settings': { title: 'Org Settings',   icon: Settings,   description: 'Configure thresholds and organization' },
+  '/dashboard/roadmap':  { title: 'Future Roadmap', icon: Rocket,     description: 'Planned upcoming features on the forensic horizon' },
 };
 
 
@@ -56,8 +59,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       });
   }, [_hasHydrated]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close sidebar on route change (mobile)
+  // Close sidebar on route change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSidebarOpen(false);
   }, [pathname]);
 
@@ -82,12 +86,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen flex bg-[#0B0D12]">
-      {/* ── Desktop sidebar ───────────────────────────────────────────────── */}
-      <div className="hidden lg:flex flex-shrink-0">
-        <Sidebar />
-      </div>
-
-      {/* ── Mobile sidebar overlay ─────────────────────────────────────────── */}
+      {/* ── Slide-in Navigation Drawer (Toggled by 3-line hamburger button) ───── */}
       <AnimatePresence>
         {sidebarOpen && (
           <>
@@ -96,17 +95,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="fixed inset-0 bg-black/65 backdrop-blur-sm z-40 lg:hidden"
+              className="fixed inset-0 bg-[#0B0D12]/60 backdrop-blur-md z-40"
               onClick={() => setSidebarOpen(false)}
             />
             <motion.div
-              initial={{ x: -280 }}
+              initial={{ x: '-100%' }}
               animate={{ x: 0 }}
-              exit={{ x: -280 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 220 }}
-              className="fixed left-0 top-0 bottom-0 z-50 lg:hidden"
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 240 }}
+              className="fixed left-0 top-0 bottom-0 z-50 w-[85vw] max-w-[280px] shadow-[16px_0_48px_rgba(0,0,0,0.9),4px_0_24px_rgba(60,182,151,0.18)] border-r border-[#3CB697]/30 bg-[#131620]"
             >
-              <Sidebar onClose={() => setSidebarOpen(false)} />
+              <Sidebar onClose={() => setSidebarOpen(false)} className="w-full border-r-0 bg-[#131620]" />
             </motion.div>
           </>
         )}
@@ -116,38 +115,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top nav bar */}
         <header className="h-14 flex items-center justify-between px-4 lg:px-6 border-b border-[rgba(60,182,151,0.07)] bg-[#0B0D12]/90 backdrop-blur-md sticky top-0 z-30">
-          {/* Mobile hamburger */}
-          <button
-            className="lg:hidden p-2 rounded-lg hover:bg-[#1E2230] text-[#8A90A4] hover:text-[#E8E6DF] transition-colors"
-            onClick={() => setSidebarOpen((o) => !o)}
-            aria-label="Toggle navigation"
-          >
-            {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
-          </button>
+          <div className="flex items-center gap-3">
+            {/* 3-line hamburger toggle button */}
+            <button
+              className="p-2 rounded-xl hover:bg-[#1E2230] text-[#8A90A4] hover:text-[#3CB697] transition-all border border-[rgba(60,182,151,0.15)] hover:border-[#3CB697]/40 flex items-center justify-center cursor-pointer shadow-[0_0_12px_rgba(60,182,151,0.06)]"
+              onClick={() => setSidebarOpen((o) => !o)}
+              aria-label="Toggle navigation"
+              title="Navigation Menu"
+            >
+              {sidebarOpen ? <X size={18} className="text-[#3CB697]" /> : <Menu size={18} className="text-[#3CB697]" />}
+            </button>
 
-          {/* Desktop: page title breadcrumb */}
-          {pageMeta ? (
-            <div className="hidden lg:flex items-center gap-3">
-              <div className="w-7 h-7 rounded-lg bg-[#3CB697]/10 border border-[#3CB697]/15 flex items-center justify-center">
+            {/* Brand logo in top header */}
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-[#3CB697]/12 border border-[#3CB697]/25 flex items-center justify-center flex-shrink-0">
+                <Shield size={16} className="text-[#3CB697]" />
+              </div>
+              <span
+                className="text-sm font-bold text-[#E8E6DF] tracking-tight hidden sm:inline-block"
+                style={{ fontFamily: 'var(--font-space-grotesk)' }}
+              >
+                ATS Fraud Detector
+              </span>
+            </div>
+
+            {/* Page title breadcrumb */}
+            {pageMeta && (
+              <div className="hidden md:flex items-center gap-2 pl-3 border-l border-[rgba(60,182,151,0.12)]">
                 <pageMeta.icon size={13} className="text-[#3CB697]" />
+                <span className="text-xs font-semibold text-[#8A90A4]">{pageMeta.title}</span>
               </div>
-              <div>
-                <p
-                  className="text-sm font-semibold text-[#E8E6DF] leading-none"
-                  style={{ fontFamily: 'var(--font-space-grotesk)' }}
-                >
-                  {pageMeta.title}
-                </p>
-                <p className="text-[10px] text-[#8A90A4] mt-0.5">{pageMeta.description}</p>
-              </div>
-            </div>
-          ) : (
-            <div className="hidden lg:flex items-center gap-2 text-xs text-[#8A90A4]">
-              <span className="text-[#3CB697] font-mono font-semibold">ATS</span>
-              <span className="text-[#8A90A4]/40">/</span>
-              <span>{user?.organization}</span>
-            </div>
-          )}
+            )}
+          </div>
 
           <UserMenu />
         </header>

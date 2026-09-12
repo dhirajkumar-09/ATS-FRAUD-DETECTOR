@@ -31,6 +31,13 @@ export default function AuthPage() {
   useEffect(() => {
     if (_hasHydrated && token) {
       router.replace('/dashboard/scan');
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('tab') === 'register' || params.get('mode') === 'register') {
+        setTab('register');
+      }
     }
   }, [_hasHydrated, token, router]);
 

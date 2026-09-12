@@ -41,7 +41,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Allow the Streamlit frontend (localhost:8501) during development
+# Allow the Next.js frontend (localhost:3000) during development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],   # Tighten in production

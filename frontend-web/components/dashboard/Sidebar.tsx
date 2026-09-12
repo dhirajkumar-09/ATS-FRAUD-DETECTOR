@@ -9,6 +9,9 @@ import {
   Search,
   Settings,
   Shield,
+  Rocket,
+  History,
+  X,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
 import { cn } from '@/lib/utils';
@@ -16,16 +19,27 @@ import { cn } from '@/lib/utils';
 type IconComponent = React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>;
 
 const NAV_ITEMS = [
-  { href: '/dashboard/scan',  label: 'Single Scan',   icon: ScanLine  },
-  { href: '/dashboard/batch', label: 'Batch Scan',    icon: LayoutList },
-  { href: '/dashboard/inspect', label: 'Span Inspector', icon: Search },
+  { href: '/dashboard/scan',    label: 'Single Scan',    icon: ScanLine   },
+  { href: '/dashboard/batch',   label: 'Batch Scan',     icon: LayoutList },
+  { href: '/dashboard/inspect', label: 'Span Inspector', icon: Search     },
+  { href: '/dashboard/history', label: 'Scan History',   icon: History    },
+];
+
+const PREVIEW_ITEMS = [
+  { href: '/dashboard/roadmap', label: 'Future Roadmap', icon: Rocket },
 ];
 
 const ADMIN_ITEMS = [
   { href: '/dashboard/settings', label: 'Org Settings', icon: Settings },
 ];
 
-export default function Sidebar({ onClose }: { onClose?: () => void }) {
+export default function Sidebar({
+  onClose,
+  className,
+}: {
+  onClose?: () => void;
+  className?: string;
+}) {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
 
@@ -82,23 +96,36 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
   };
 
   return (
-    <aside className="flex flex-col h-full bg-[#0B0D12] border-r border-[rgba(60,182,151,0.08)] w-64">
+    <aside className={cn("flex flex-col h-full bg-[#0B0D12] border-r border-[rgba(60,182,151,0.08)] w-64", className)}>
       {/* Brand */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-[rgba(60,182,151,0.08)]">
-        <div className="w-9 h-9 rounded-xl bg-[#3CB697]/12 border border-[#3CB697]/25 flex items-center justify-center flex-shrink-0">
-          <Shield size={17} className="text-[#3CB697]" />
+      <div className="flex items-center justify-between px-5 py-5 border-b border-[rgba(60,182,151,0.08)]">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-[#3CB697]/12 border border-[#3CB697]/25 flex items-center justify-center flex-shrink-0">
+            <Shield size={17} className="text-[#3CB697]" />
+          </div>
+          <div className="min-w-0">
+            <p
+              className="text-sm font-bold text-[#E8E6DF] leading-tight tracking-tight"
+              style={{ fontFamily: 'var(--font-space-grotesk)' }}
+            >
+              ATS Fraud
+            </p>
+            <p className="text-[10px] text-[#3CB697] font-mono tracking-[0.18em] uppercase mt-0.5">
+              Detector
+            </p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <p
-            className="text-sm font-bold text-[#E8E6DF] leading-tight tracking-tight"
-            style={{ fontFamily: 'var(--font-space-grotesk)' }}
+
+        {/* Mobile close (X) button */}
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-[#8A90A4] hover:text-[#E8E6DF] hover:bg-[#1E2230] transition-colors flex-shrink-0"
+            aria-label="Close navigation"
           >
-            ATS Fraud
-          </p>
-          <p className="text-[10px] text-[#3CB697] font-mono tracking-[0.18em] uppercase mt-0.5">
-            Detector
-          </p>
-        </div>
+            <X size={18} />
+          </button>
+        )}
       </div>
 
       {/* Nav */}
@@ -110,6 +137,17 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
           {NAV_ITEMS.map((item) => (
             <NavLink key={item.href} {...item} />
           ))}
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-[rgba(60,182,151,0.07)]">
+          <p className="px-3 mb-1.5 text-[10px] font-semibold text-[#8A90A4]/70 uppercase tracking-[0.15em]">
+            Preview
+          </p>
+          <div className="space-y-0.5">
+            {PREVIEW_ITEMS.map((item) => (
+              <NavLink key={item.href} {...item} />
+            ))}
+          </div>
         </div>
 
         {user?.is_admin && (

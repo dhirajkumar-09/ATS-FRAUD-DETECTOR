@@ -16,7 +16,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -534,6 +535,123 @@ async def create_batch_scan(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Scan History Models & GET /scan
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ScanHistoryItem(BaseModel):
+    scan_id: int
+    filename: str
+    scanned_at: Optional[str] = None
+    trust_score: Optional[float] = None
+    trust_label: Optional[str] = None
+    ai_content_score: Optional[float] = None
+    true_match_score: Optional[float] = None
+    total_signals: int = 0
+    high_count: int = 0
+    medium_count: int = 0
+    low_count: int = 0
+
+
+class ScanHistorySummary(BaseModel):
+    total_scans: int
+    counts_by_label: dict[str, int]
+    average_trust_score: float
+
+
+class ScanHistoryResponse(BaseModel):
+    items: list[ScanHistoryItem]
+    total: int
+    limit: int
+    offset: int
+    summary: ScanHistorySummary
+
+
+@router.get("", response_model=ScanHistoryResponse)
+@router.get("/", response_model=ScanHistoryResponse, include_in_schema=False)
+def list_scans(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    trust_label: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List all ScanResults for resumes owned by the current user,
+    with pagination, trust_label filtering, and overall summary metrics.
+    """
+    base_query = (
+        db.query(ScanResult)
+        .join(Resume, ScanResult.resume_id == Resume.id)
+        .filter(Resume.owner_id == current_user.id)
+    )
+
+    # Compute unpaginated overall summary for the current user
+    all_user_scans = (
+        db.query(ScanResult.trust_label, ScanResult.trust_score)
+        .join(Resume, ScanResult.resume_id == Resume.id)
+        .filter(Resume.owner_id == current_user.id)
+        .all()
+    )
+
+    total_scans = len(all_user_scans)
+    counts_by_label: dict[str, int] = {"Verified": 0, "Caution": 0, "High Risk": 0}
+    scores: list[float] = []
+
+    for label, score in all_user_scans:
+        if label:
+            counts_by_label[label] = counts_by_label.get(label, 0) + 1
+        if score is not None:
+            scores.append(score)
+
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+
+    # Apply optional filter
+    filtered_query = base_query
+    if trust_label:
+        filtered_query = filtered_query.filter(ScanResult.trust_label == trust_label)
+
+    total_filtered = filtered_query.count()
+
+    # Sort newest first
+    scans = (
+        filtered_query
+        .order_by(ScanResult.scanned_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    items = [
+        ScanHistoryItem(
+            scan_id=s.id,
+            filename=s.resume.filename if s.resume else "unknown.pdf",
+            scanned_at=s.scanned_at.isoformat() if s.scanned_at else None,
+            trust_score=s.trust_score,
+            trust_label=s.trust_label,
+            ai_content_score=s.ai_content_score,
+            true_match_score=s.true_match_score,
+            total_signals=s.total_signals or 0,
+            high_count=s.high_count or 0,
+            medium_count=s.medium_count or 0,
+            low_count=s.low_count or 0,
+        )
+        for s in scans
+    ]
+
+    return ScanHistoryResponse(
+        items=items,
+        total=total_filtered,
+        limit=limit,
+        offset=offset,
+        summary=ScanHistorySummary(
+            total_scans=total_scans,
+            counts_by_label=counts_by_label,
+            average_trust_score=avg_score,
+        ),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GET /scan/{scan_id}
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -749,12 +867,13 @@ def create_share_link(
             detail="Candidate Transparency Mode is not enabled for your organization. Please enable it in Settings first."
         )
 
-    if not scan.share_token:
-        scan.share_token = secrets.token_urlsafe(32)
-        scan.share_token_created_at = datetime.now(timezone.utc)
-        db.commit()
+    # Always rotate the token on each POST — supports the "Regenerate" flow
+    # (old token is immediately invalidated, old public URLs stop working)
+    scan.share_token = secrets.token_urlsafe(32)
+    scan.share_token_created_at = datetime.now(timezone.utc)
+    db.commit()
 
-    # We return just the token string, frontend will construct the URL
+    # We return just the token string; the frontend constructs the full URL
     return {"share_token": scan.share_token}
 
 

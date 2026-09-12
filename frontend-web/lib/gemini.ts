@@ -223,7 +223,7 @@ export async function testGeminiConnection(): Promise<{ ok: boolean; error?: str
     const genAI = new GoogleGenerativeAI(API_KEY);
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     const response = await model.generateContent('Respond with exactly: "ATS Fraud Detector connection OK"');
-    const text = response.response.text();
+    void response.response.text();
     return { ok: true, model: GEMINI_MODEL };
   } catch (error) {
     return { ok: false, error: parseGeminiError(error) };

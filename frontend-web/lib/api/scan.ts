@@ -9,6 +9,7 @@ import type {
   InspectResult,
   InspectPage,
   TextSpan,
+  ScanHistoryResponse,
 } from '../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -205,4 +206,14 @@ export async function getPublicScanResult(token: string): Promise<unknown> {
   const { data } = await apiClient.get(`/scan/public/${token}`);
   return data;
 }
+
+export async function getScanHistory(params?: {
+  limit?: number;
+  offset?: number;
+  trust_label?: string;
+}): Promise<ScanHistoryResponse> {
+  const { data } = await apiClient.get<ScanHistoryResponse>('/scan', { params });
+  return data;
+}
+
 

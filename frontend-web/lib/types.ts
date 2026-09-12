@@ -191,3 +191,33 @@ export interface InspectResult {
 export interface HealthResponse {
   status: string;
 }
+
+// ── Scan History ─────────────────────────────────────────────────────────────
+
+export interface ScanHistoryItem {
+  scan_id: number;
+  filename: string;
+  scanned_at?: string | null;
+  trust_score?: number | null;
+  trust_label?: string | null;
+  ai_content_score?: number | null;
+  true_match_score?: number | null;
+  total_signals: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+}
+
+export interface ScanHistorySummary {
+  total_scans: number;
+  counts_by_label: Record<string, number>;
+  average_trust_score: number;
+}
+
+export interface ScanHistoryResponse {
+  items: ScanHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: ScanHistorySummary;
+}
