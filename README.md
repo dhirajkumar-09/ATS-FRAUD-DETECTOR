@@ -1,12 +1,22 @@
-# ATS Fraud Detector
+# 🕵️ ATS Fraud Detector
 
-> **Recruiter-grade forensic tool** that scans resume PDFs for ATS-manipulation techniques, scores AI authorship, measures job-description match, and issues a blended Trust Score with an executive briefing.
+> **Recruiter-grade forensic tool** that scans resume PDFs for ATS-manipulation techniques, scores AI authorship, measures job-description match, and issues a blended **Trust Score** with an executive briefing.
+
+🔗 **Live App:** [ats-fraud-detector.vercel.app](https://ats-fraud-detector.vercel.app)
+📦 **Repo:** [dhirajkumar-09/ATS-FRAUD-DETECTOR](https://github.com/dhirajkumar-09/ATS-FRAUD-DETECTOR)
+
+![Status](https://img.shields.io/badge/status-active-success)
+![Backend](https://img.shields.io/badge/backend-FastAPI-009688)
+![Frontend](https://img.shields.io/badge/frontend-Next.js-000000)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
 ## Table of Contents
 
+- [Why This Exists](#why-this-exists)
 - [Features](#features)
+- [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
 - [Authentication](#authentication)
@@ -14,6 +24,16 @@
 - [Configuration](#configuration)
 - [Phase Status](#phase-status)
 - [Running Tests](#running-tests)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+
+---
+
+## Why This Exists
+
+Recruiters today rely on ATS software that only checks **keyword matches** — it has no way to detect resumes engineered with hidden text, zero-width characters, or fully AI-generated content designed to game the system. This leads to genuine candidates being filtered out while manipulated resumes slip through.
+
+**ATS Fraud Detector** closes that gap: it forensically analyzes the actual resume PDF, flags manipulation signals with visual evidence, scores likely AI authorship, measures true relevance to the job description, and rolls it all into one actionable **Trust Score** — without sending candidate data to any third-party database.
 
 ---
 
@@ -24,19 +44,29 @@
 | **Fraud Signals** | Zero-width characters, Unicode homoglyphs, hidden / near-white text, off-page / tiny-font text, layer-order & word-order mismatch, metadata red flags, image-only pages |
 | **AI Content Score** | Heuristic burstiness + perplexity score (0–100, higher = more likely AI-written) |
 | **True Match Score** | TF-IDF cosine similarity of resume text vs. job description (0–100) |
-| **Trust Score** | Blended verdict — `Verified` / `Caution` / `High Risk` — guaranteed consistent with signal severity |
+| **Trust Score** | Blended verdict — `Verified` / `Caution` / `High Risk` — consistent with signal severity |
 | **Forensic Narrative** | Plain-English executive briefing: verdict, key factors, recommendation, limitations |
-| **SVG Trust Badge** | Shields-style coloured badge you can embed in ATS dashboards or emails |
+| **SVG Trust Badge** | Shields-style coloured badge, embeddable in ATS dashboards or emails |
 | **Batch Leaderboard** | Upload multiple resumes, get a ranked table sorted by Trust Score + Match Score |
-| **Span Inspector** | Side-by-side clean vs flagged text-span comparison per page |
-| **Forensic PDF Report** | Full ReportLab PDF with heatmap, executive briefing, signal detail table |
+| **Span Inspector** | Side-by-side clean vs. flagged text-span comparison, per page |
+| **Forensic PDF Report** | Full ReportLab PDF with heatmap, executive briefing, and signal detail table |
+
+---
+
+## Tech Stack
+
+**Frontend (`frontend-web/`)**
+Next.js, React, TypeScript, Tailwind CSS, shadcn/ui, Three.js + React Three Fiber, Framer Motion — deployed on **Vercel**.
+
+**Backend (`backend/`)**
+FastAPI, SQLAlchemy, JWT authentication, PyMuPDF + pdfplumber (PDF parsing), Tesseract OCR fallback, HuggingFace `distilgpt2` (AI content detection), scikit-learn TF-IDF (match scoring), ReportLab (PDF reports), Google Gemini API (assistant features) — deployed on **Render**.
 
 ---
 
 ## Project Structure
 
 ```
-innovations/
+ATS-FRAUD-DETECTOR/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                   # FastAPI entry-point + lifespan
@@ -45,7 +75,7 @@ innovations/
 │   │   ├── models.py                 # Resume, ScanResult, FraudSignal, TextSpan
 │   │   ├── auth.py                   # JWT auth helpers
 │   │   ├── routers/
-│   │   │   ├── scan.py               # All /scan endpoints (single, batch, inspect, badge)
+│   │   │   ├── scan.py               # /scan endpoints (single, batch, inspect, badge)
 │   │   │   └── report.py             # GET /report/{id}/pdf
 │   │   └── services/
 │   │       ├── pdf_extractor.py      # PyMuPDF + pdfplumber — robust extraction
@@ -60,95 +90,89 @@ innovations/
 │   │       └── ocr_helper.py         # Tesseract fallback
 │   ├── requirements.txt
 │   └── tests/
-│       ├── fixtures/                 # 5 deterministic test PDFs
-│       ├── generate_fixtures.py      # Fixture generator script
+│       ├── fixtures/                 # Deterministic test PDFs
+│       ├── generate_fixtures.py
 │       ├── test_pdf_extractor.py
 │       ├── test_fraud_detectors.py
 │       ├── test_phase3.py
 │       ├── test_phase5_features.py
-│       └── test_audit_and_features.py  # Audit + new-feature tests (12 tests)
-├── frontend/
-│   ├── app.py                        # Streamlit "Cyber-Forensic Audit Station"
-│   └── .streamlit/
-│       └── config.toml               # Dark forensic theme
-└── .streamlit/
-    └── config.toml                   # Root-level theme fallback
+│       └── test_audit_and_features.py
+│
+├── frontend-web/                     # Next.js recruiter dashboard (live on Vercel)
+│   ├── app/                          # App router pages
+│   ├── components/                   # UI components (shadcn/ui based)
+│   └── public/
+│
+├── PHASE5_CHANGES.md
+├── PHASE6_CHANGES.md
+└── README.md
 ```
 
 ---
 
 ## Quick Start
 
-### 1 — Clone & create virtual environment
+### 1 — Clone the repo
 
-```powershell
-cd C:\innovations\backend
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+```bash
+git clone https://github.com/dhirajkumar-09/ATS-FRAUD-DETECTOR.git
+cd ATS-FRAUD-DETECTOR
 ```
 
-### 2 — Install backend dependencies
+### 2 — Backend setup
 
-```powershell
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1        # Windows
+# source .venv/bin/activate       # macOS/Linux
+
 pip install -r requirements.txt
 ```
-
-> **Note:** `chardet` is intentionally **not** listed. It conflicts with `urllib3`'s `charset-normalizer` and emits a `RequestsDependencyWarning` on every Streamlit start. Use `charset-normalizer` (already listed) instead.
+> **Note:** `chardet` is intentionally **not** listed — it conflicts with `urllib3`'s `charset-normalizer`. Use `charset-normalizer` (already listed) instead.
 
 ### 3 — Run the backend
 
-```powershell
-# from C:\innovations\backend\
+```bash
 python -m uvicorn app.main:app --reload --port 8000
 ```
-
 Visit **http://localhost:8000/docs** for the interactive Swagger UI.
 
-### 4 — Run the Streamlit frontend (new terminal)
+### 4 — Run the frontend (new terminal)
 
-```powershell
-# from C:\innovations\
-.venv\Scripts\streamlit.exe run frontend/app.py
-# OR activate the venv first, then:
-streamlit run frontend/app.py
+```bash
+cd frontend-web
+npm install
+npm run dev
 ```
-
-Visit **http://localhost:8501**
-
-The Streamlit app shows a **Log in / Register** screen first — every scan and report call it makes is authenticated (see [Authentication](#authentication) below).
+Visit **http://localhost:3000**
 
 ### 5 — Run tests
 
-```powershell
-# from C:\innovations\backend\
+```bash
+cd backend
 pytest tests/ -v
 ```
-
-Expected: **139 passed**.
 
 ---
 
 ## Authentication
 
-Every `/scan` and `/report` endpoint requires a **Bearer JWT**. There is no
-anonymous access — calling any of them without a token returns `401
-Unauthorized`. Accounts are scoped to an **organization**: the first person
-to register under a given `organization` name is auto-promoted to admin for
-that org, so no separate bootstrap step is needed.
+Every `/scan` and `/report` endpoint requires a **Bearer JWT**. There is no anonymous access — calling any of them without a token returns `401 Unauthorized`. Accounts are scoped to an **organization**: the first person to register under a given `organization` name is auto-promoted to admin for that org.
 
 ### Auth Endpoints
 
 | Method | Path | Auth required | Description |
-|--------|------|---|-------------|
+|---|---|---|---|
 | `POST` | `/auth/register` | No | Create an account, returns a JWT immediately |
 | `POST` | `/auth/login` | No | OAuth2 password flow (`username` = email), returns a JWT |
-| `GET`  | `/auth/me` | Yes | Current user's profile |
-| `GET`  | `/auth/org-settings` | Yes | This user's org threshold overrides |
-| `PUT`  | `/auth/org-settings` | Yes (admin only) | Update org threshold overrides |
+| `GET` | `/auth/me` | Yes | Current user's profile |
+| `GET` | `/auth/org-settings` | Yes | This user's org threshold overrides |
+| `PUT` | `/auth/org-settings` | Yes (admin only) | Update org threshold overrides |
 
 ### Register
 
-```
+```http
 POST /auth/register
 Content-Type: application/json
 
@@ -175,20 +199,17 @@ Response (also returned by `/auth/login`):
 
 ### Login
 
-```
+```http
 POST /auth/login
 Content-Type: application/x-www-form-urlencoded
 
 username=recruiter@acme.com&password=at-least-8-chars
 ```
-
-> Login uses the standard OAuth2 password-flow form fields (`username` /
-> `password`), **not** JSON — this is what lets you authorize directly from
-> the `/docs` Swagger UI's "Authorize" button.
+> Login uses standard OAuth2 password-flow form fields (`username` / `password`), **not** JSON — this lets you authorize directly from the `/docs` Swagger UI's "Authorize" button.
 
 ### Using the token
 
-Every other endpoint below needs this header:
+Every other endpoint needs this header:
 
 ```
 Authorization: Bearer <access_token>
@@ -196,10 +217,7 @@ Authorization: Bearer <access_token>
 
 ### Org settings (admin)
 
-Admins can override two detection thresholds per organization instead of
-relying on the app-wide defaults in [Configuration](#configuration):
-
-```
+```http
 PUT /auth/org-settings
 Authorization: Bearer <admin's access_token>
 Content-Type: application/json
@@ -209,37 +227,28 @@ Content-Type: application/json
   "hidden_font_size_pt": 1.5
 }
 ```
-
-Pass `null` for either field to fall back to the app default. Non-admins can
-`GET /auth/org-settings` to see the current org values but cannot change them.
-
-> **No UI yet:** org-settings can only be read/changed via raw API calls or
-> the `/docs` Swagger page right now — the Streamlit frontend doesn't expose
-> a settings screen for it.
+Pass `null` for either field to fall back to the app default. Non-admins can `GET /auth/org-settings` to view current org values but cannot change them.
 
 ---
 
 ## API Reference
 
-### Core Endpoints
-
-All endpoints below require the `Authorization: Bearer <access_token>` header
-described in [Authentication](#authentication).
+All endpoints below require the `Authorization: Bearer <access_token>` header described in [Authentication](#authentication).
 
 | Method | Path | Description |
-|--------|------|-------------|
-| `GET`  | `/health` | Backend health check (no auth required) |
+|---|---|---|
+| `GET` | `/health` | Backend health check (no auth required) |
 | `POST` | `/scan` | Upload a single resume PDF; optional `job_description` form field |
-| `GET`  | `/scan/{scan_id}` | Retrieve full scan result (fraud signals, scores, narrative) |
+| `GET` | `/scan/{scan_id}` | Retrieve full scan result (fraud signals, scores, narrative) |
 | `POST` | `/scan/batch` | Upload multiple resumes; returns ranked Trust Score leaderboard |
-| `GET`  | `/scan/{scan_id}/inspect` | Forensic side-by-side span inspector (clean vs flagged) |
-| `GET`  | `/scan/{scan_id}/badge.svg` | Download SVG trust badge for embedding |
-| `GET`  | `/report/{scan_id}/pdf` | Download full forensic PDF report |
-| `GET`  | `/docs` | Swagger UI |
+| `GET` | `/scan/{scan_id}/inspect` | Forensic side-by-side span inspector (clean vs. flagged) |
+| `GET` | `/scan/{scan_id}/badge.svg` | Download SVG trust badge for embedding |
+| `GET` | `/report/{scan_id}/pdf` | Download full forensic PDF report |
+| `GET` | `/docs` | Swagger UI |
 
 ### `/scan` — Request
 
-```
+```http
 POST /scan
 Authorization: Bearer <access_token>
 Content-Type: multipart/form-data
@@ -272,7 +281,7 @@ job_description: "Senior Python engineer…" (optional)
 
 ### `/scan/batch` — Request
 
-```
+```http
 POST /scan/batch
 Authorization: Bearer <access_token>
 Content-Type: multipart/form-data
@@ -280,22 +289,21 @@ Content-Type: multipart/form-data
 files:           [resume1.pdf, resume2.pdf, …]
 job_description: "…" (optional)
 ```
-
 Returns an array sorted by `trust_score DESC`, `true_match_score DESC`.
 
 ### End-to-end example (curl)
 
-```powershell
+```bash
 # 1. Register (or use /auth/login if you already have an account)
-curl -X POST http://localhost:8000/auth/register `
-  -H "Content-Type: application/json" `
-  -d '{\"email\":\"recruiter@acme.com\",\"password\":\"at-least-8-chars\",\"organization\":\"Acme Corp\"}'
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"recruiter@acme.com","password":"at-least-8-chars","organization":"Acme Corp"}'
 
 # Copy the "access_token" from the response, then:
 
 # 2. Scan a resume using the token
-curl -X POST http://localhost:8000/scan `
-  -H "Authorization: Bearer <PASTE_ACCESS_TOKEN_HERE>" `
+curl -X POST http://localhost:8000/scan \
+  -H "Authorization: Bearer <PASTE_ACCESS_TOKEN_HERE>" \
   -F "file=@resume.pdf"
 ```
 
@@ -303,7 +311,7 @@ curl -X POST http://localhost:8000/scan `
 
 ## Configuration
 
-All thresholds live in [`config.py`](file:///C:/innovations/backend/app/config.py) and can be overridden with environment variables:
+All thresholds live in `backend/app/config.py` and can be overridden with environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -317,9 +325,25 @@ All thresholds live in [`config.py`](file:///C:/innovations/backend/app/config.p
 
 ---
 
+## Phase Status
+
+| Phase | Description | Status |
+|---|---|---|
+| **Phase 1** | Skeleton + PDF extraction + `/scan` endpoint + MVP UI | ✅ Done |
+| **Phase 2** | Fraud detectors (zero-width, homoglyphs, hidden text, off-page/tiny-font, timeline) | ✅ Done |
+| **Phase 3** | AI content detection + True Match Score (TF-IDF) | ✅ Done |
+| **Phase 4** | Visual heatmap + Forensic PDF report (ReportLab) | ✅ Done |
+| **Phase 5** | Evidence/case-file UI redesign | ✅ Done |
+| **Phase 6** | Full audit + determinism + UI redesign + new features | ✅ Done |
+| **Phase 7** | Docker + cloud deployment automation | 🔲 Planned |
+
+See [`PHASE5_CHANGES.md`](https://github.com/dhirajkumar-09/ATS-FRAUD-DETECTOR/blob/main/PHASE5_CHANGES.md) and [`PHASE6_CHANGES.md`](https://github.com/dhirajkumar-09/ATS-FRAUD-DETECTOR/blob/main/PHASE6_CHANGES.md) for the detailed change logs.
+
+---
+
 ## Running Tests
 
-```powershell
+```bash
 # All tests
 pytest tests/ -v
 
@@ -342,20 +366,22 @@ pytest tests/ --cov=app --cov-report=term-missing
 
 ---
 
-## Phase Status
+## Roadmap
 
-| Phase | Description | Status |
-|---|---|---|
-| **Phase 1** | Skeleton + PDF extraction + `/scan` endpoint + Streamlit MVP | ✅ Done |
-| **Phase 2** | Fraud detectors (zero-width, homoglyphs, hidden text, off-page/tiny-font, timeline) | ✅ Done |
-| **Phase 3** | AI content detection + True Match Score (TF-IDF) | ✅ Done |
-| **Phase 4** | Visual heatmap + Forensic PDF report (ReportLab) | ✅ Done |
-| **Phase 5** | Frontend polish — evidence/case-file redesign | ✅ Done |
-| **Phase 6** | Full audit + determinism + UI redesign + new features | ✅ Done |
-| **Phase 7** | Docker + cloud deployment | 🔲 Planned |
+- 🐳 Docker + one-click cloud deployment for recruiter teams
+- 🎥 Identity & video verification (catch interview-stage deepfakes / proxy interviewers)
+- 📊 Benchmark-tested AI detector with published precision/recall on a labeled dataset
+- 🧩 Browser extension for in-platform scanning (LinkedIn, Naukri, etc.)
+- 🌐 Regional language support (Hindi and other Indian-language resumes)
 
 ---
 
-## What's New in Phase 6
+## Contributing
 
-See [`PHASE6_CHANGES.md`](./PHASE6_CHANGES.md) for the full change log, including every bug fixed, every determinism guarantee added, the UI rewrite, and the new API features.
+Issues and PRs are welcome. Please open an issue first to discuss significant changes before submitting a pull request.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE) for details.
