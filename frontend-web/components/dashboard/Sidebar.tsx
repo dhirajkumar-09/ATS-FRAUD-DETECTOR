@@ -11,6 +11,7 @@ import {
   Shield,
   Rocket,
   History,
+  User,
   X,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
@@ -150,18 +151,17 @@ export default function Sidebar({
           </div>
         </div>
 
-        {user?.is_admin && (
-          <div className="mt-5 pt-4 border-t border-[rgba(60,182,151,0.07)]">
-            <p className="px-3 mb-1.5 text-[10px] font-semibold text-[#8A90A4]/70 uppercase tracking-[0.15em]">
-              Admin
-            </p>
-            <div className="space-y-0.5">
-              {ADMIN_ITEMS.map((item) => (
-                <NavLink key={item.href} {...item} />
-              ))}
-            </div>
+        <div className="mt-5 pt-4 border-t border-[rgba(60,182,151,0.07)]">
+          <p className="px-3 mb-1.5 text-[10px] font-semibold text-[#8A90A4]/70 uppercase tracking-[0.15em]">
+            Account
+          </p>
+          <div className="space-y-0.5">
+            <NavLink href="/dashboard/profile" label="Profile" icon={User} />
+            {user?.is_admin && (
+              <NavLink href="/dashboard/settings" label="Org Settings" icon={Settings} />
+            )}
           </div>
-        )}
+        </div>
       </nav>
 
       {/* Footer org info */}

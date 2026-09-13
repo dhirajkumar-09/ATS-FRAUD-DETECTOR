@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { User, Building2, Mail, Lock, Eye, EyeOff, Save, Shield, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
@@ -115,6 +115,13 @@ export default function ProfilePage() {
   const [nameForm, setNameForm] = useState({ full_name: user?.full_name ?? '' });
   const [nameLoading, setNameLoading] = useState(false);
 
+  // Keep form in sync when auth store hydrates or user updates
+  useEffect(() => {
+    if (user) {
+      setNameForm({ full_name: user.full_name ?? '' });
+    }
+  }, [user]);
+
   const handleNameUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     setNameLoading(true);
@@ -123,7 +130,7 @@ export default function ProfilePage() {
       // Refresh user from server
       const fresh = await getMe();
       if (token) setAuth(token, fresh);
-      toast.success('Profile updated');
+      toast.success('Profile updated successfully');
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       toast.error(detail ?? 'Failed to update profile');

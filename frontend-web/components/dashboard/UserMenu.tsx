@@ -72,26 +72,43 @@ export default function UserMenu() {
           >
             {/* User info */}
             <div className="px-4 py-3 border-b border-[rgba(60,182,151,0.08)]">
-              <p className="text-xs font-medium text-[#E8E6DF] truncate">{user?.full_name}</p>
-              <p className="text-[11px] text-[#7A8099] truncate mt-0.5">{user?.email}</p>
-              <p className="text-[10px] text-[#7A8099] mt-1">{user?.organization}</p>
+              <p className="text-xs font-semibold text-[#E8E6DF] truncate">
+                {user?.full_name || user?.email || 'Account'}
+              </p>
+              {user?.full_name && (
+                <p className="text-[11px] text-[#7A8099] truncate mt-0.5">{user.email}</p>
+              )}
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <span className="text-[10px] font-mono text-[#3CB697] bg-[#3CB697]/10 border border-[#3CB697]/20 px-1.5 py-0.5 rounded">
+                  {user?.organization || 'ATS Org'}
+                </span>
+                {user?.is_admin && (
+                  <span className="text-[10px] font-mono text-[#8A90A4] bg-[#1E2230] px-1.5 py-0.5 rounded">
+                    Admin
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Profile link */}
             <button
               role="menuitem"
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E8E6DF]/70 hover:text-[#E8E6DF] hover:bg-[#1E2230] transition-colors text-left"
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E8E6DF]/80 hover:text-[#3CB697] hover:bg-[#1E2230] transition-colors text-left"
               onClick={() => { setOpen(false); router.push('/dashboard/profile'); }}
             >
               <User size={14} />
-              Profile
+              Profile & Account
             </button>
 
             {user?.is_admin && (
-              <div className="flex items-center gap-3 px-4 py-2 text-xs text-[#3CB697]/70">
-                <Shield size={12} />
-                <span>Organization Admin</span>
-              </div>
+              <button
+                role="menuitem"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E8E6DF]/80 hover:text-[#3CB697] hover:bg-[#1E2230] transition-colors text-left"
+                onClick={() => { setOpen(false); router.push('/dashboard/settings'); }}
+              >
+                <Shield size={14} className="text-[#3CB697]" />
+                Org Settings
+              </button>
             )}
 
             {/* Logout */}
