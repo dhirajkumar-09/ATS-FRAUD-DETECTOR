@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X, ScanLine, LayoutList, Search, Settings, Rocket, History, LayoutDashboard, Shield } from 'lucide-react';
+import { Menu, X, ScanLine, LayoutList, Search, Settings, Rocket, History, LayoutDashboard, Shield, User } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
 import { getMe } from '@/lib/api/auth';
@@ -20,6 +20,7 @@ const PAGE_META: Record<string, { title: string; icon: LucideIcon; description: 
   '/dashboard/history':  { title: 'Scan History',   icon: History,    description: 'Past forensic audits and scan logs' },
   '/dashboard/settings': { title: 'Org Settings',   icon: Settings,   description: 'Configure thresholds and organization' },
   '/dashboard/roadmap':  { title: 'Future Roadmap', icon: Rocket,     description: 'Planned upcoming features on the forensic horizon' },
+  '/dashboard/profile':  { title: 'Profile',        icon: User,       description: 'Your account details and password' },
 };
 
 

@@ -123,16 +123,7 @@ function RoadmapCard({ item, index }: { item: RoadmapItem; index: number }) {
         <p className='text-sm text-[#8A90A4] leading-relaxed'>{item.description}</p>
       </div>
 
-      {/* ETA footer */}
-      <div className='flex items-center gap-1.5 mt-auto pt-4 border-t border-dashed border-[rgba(60,182,151,0.10)]'>
-        <div className='w-1 h-1 rounded-full bg-[#8A90A4]/40' />
-        <span
-          className='text-[11px] font-mono text-[#8A90A4]/60 tracking-wider'
-          style={{ fontFamily: 'var(--font-jetbrains-mono)' }}
-        >
-          Target: {item.eta}
-        </span>
-      </div>
+      {/* ETA footer removed */}
 
       {/* Ghost corner number */}
       <span
@@ -187,7 +178,7 @@ export default function RoadmapSection() {
               className='text-[11px] font-semibold text-[#8A90A4] uppercase tracking-[0.14em]'
               style={{ fontFamily: 'var(--font-jetbrains-mono)' }}
             >
-              Beyond the Hackathon
+              Beyond the Prototype
             </span>
           </div>
 
@@ -200,7 +191,7 @@ export default function RoadmapSection() {
           </h2>
 
           <p className='text-sm text-[#8A90A4] max-w-md mx-auto leading-relaxed'>
-            Features on our roadmap beyond this hackathon — a glimpse of where the forensic engine goes next.
+            Features on our roadmap beyond this prototype — a glimpse of where the forensic engine goes next.
           </p>
         </motion.div>
 

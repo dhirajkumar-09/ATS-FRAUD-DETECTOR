@@ -81,7 +81,7 @@ export default function UserMenu() {
             <button
               role="menuitem"
               className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E8E6DF]/70 hover:text-[#E8E6DF] hover:bg-[#1E2230] transition-colors text-left"
-              onClick={() => setOpen(false)}
+              onClick={() => { setOpen(false); router.push('/dashboard/profile'); }}
             >
               <User size={14} />
               Profile

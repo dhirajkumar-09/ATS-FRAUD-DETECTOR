@@ -69,6 +69,15 @@ class OrgSettingsOut(BaseModel):
     candidate_transparency_enabled: bool
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 # ── Register ─────────────────────────────────────────────────────────────────
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
@@ -173,3 +182,36 @@ def update_org_settings(
         hidden_font_size_pt=settings.hidden_font_size_pt,
         candidate_transparency_enabled=settings.candidate_transparency_enabled,
     )
+
+
+# ── Update profile (display name) ─────────────────────────────────────────────
+@router.put("/me", response_model=UserOut)
+def update_me(
+    payload: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the authenticated user's display name."""
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name.strip() or None
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+# ── Change password ────────────────────────────────────────────────────────────
+@router.put("/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change password — requires the current password to be verified first."""
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()
+    return {"detail": "Password updated successfully."}

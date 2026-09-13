@@ -28,7 +28,12 @@ export const metadata: Metadata = {
   title: 'ATS Fraud Detector',
   description: 'Forensic resume scanning for recruiters — detect ATS manipulation with AI-powered analysis',
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/favicon.ico', sizes: '32x32', type: 'image/x-icon' },
+      { url: '/icon.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: '/icon.png',
+    shortcut: '/favicon.ico',
   },
 };
 
