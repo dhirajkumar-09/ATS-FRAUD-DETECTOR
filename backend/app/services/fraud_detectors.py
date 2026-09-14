@@ -572,6 +572,13 @@ def detect_offpage_or_zero_size(
 
 # Regex for common resume date-range patterns, e.g.:
 #   "Jan 2020 – Mar 2022"   "2019–Present"   "June 2018 to Current"
+#
+# FIX (crash bug): added (?<!\d) / (?!\d) guards around the bare 4-digit
+# year branches so a substring like "0000" inside a phone number
+# ("+91-90000-00000") or pincode can no longer be mistaken for a year.
+# Without these lookarounds, \d{4} happily matches the last 4 digits of
+# any longer digit run, which previously produced raw="0000" and crashed
+# downstream in _parse_date_fuzzy with `ValueError: year 0 is out of range`.
 _DATE_RANGE_RE = re.compile(
     r"""
     (?P<start>
@@ -580,7 +587,7 @@ _DATE_RANGE_RE = re.compile(
            Dec(?:ember)?)
         \s*\.?\s*\d{4}
         |
-        \d{4}                     # bare year
+        (?<!\d)\d{4}(?!\d)        # bare year — not part of a longer digit run
     )
     \s*
     (?:–|—|−|-{1,2}|to|through|until)   # separator
@@ -591,7 +598,7 @@ _DATE_RANGE_RE = re.compile(
            Dec(?:ember)?)
         \s*\.?\s*\d{4}
         |
-        \d{4}
+        (?<!\d)\d{4}(?!\d)        # bare year — not part of a longer digit run
         |
         (?:Present|Current|Now|Ongoing|Today)
     )
@@ -601,20 +608,52 @@ _DATE_RANGE_RE = re.compile(
 
 _TODAY = date.today()
 
+# FIX (crash bug): reasonable bounds for a resume date — anything outside
+# this range is almost certainly a mis-parsed phone number, ID, or OCR
+# artifact rather than a genuine employment year, so we discard it instead
+# of trying to construct an out-of-range `date()` object.
+_MIN_VALID_YEAR = 1950
+_MAX_VALID_YEAR_OFFSET = 1  # allow up to 1 year in the future (ref_date.year + 1)
+
 
 def _parse_date_fuzzy(raw: str, ref_date: date | None = None) -> date | None:
-    """Parse a date string; returns None if unparseable."""
+    """
+    Parse a date string; returns None if unparseable OR if the resulting
+    year falls outside a sane resume-date range (1950 .. today+1).
+
+    This is the fix for the production crash:
+        File "fraud_detectors.py", line 613, in _parse_date_fuzzy
+            return date(int(raw), 1, 1)
+        ValueError: year 0 is out of range
+
+    That happened because the old regex could match "0000" out of a phone
+    number, and `date(0, 1, 1)` is not a valid Python date. Now any
+    out-of-range or garbage year is simply treated as "not a date" (None)
+    instead of raising.
+    """
     raw = raw.strip()
     target_today = ref_date or date.today()
+    max_valid_year = target_today.year + _MAX_VALID_YEAR_OFFSET
+
     if re.match(r"(?:Present|Current|Now|Ongoing|Today)", raw, re.IGNORECASE):
         return target_today
+
     # Bare year → Jan 1 of that year
     if re.fullmatch(r"\d{4}", raw):
-        return date(int(raw), 1, 1)
+        year = int(raw)
+        if year < _MIN_VALID_YEAR or year > max_valid_year:
+            return None
+        return date(year, 1, 1)
+
     try:
-        return du_parser.parse(raw, default=datetime(2000, 1, 1)).date()
+        parsed = du_parser.parse(raw, default=datetime(2000, 1, 1)).date()
     except Exception:  # noqa: BLE001
         return None
+
+    if parsed.year < _MIN_VALID_YEAR or parsed.year > max_valid_year:
+        return None
+
+    return parsed
 
 
 def extract_date_ranges(spans: list[dict], ref_date: date | None = None) -> list[dict]:
@@ -629,7 +668,6 @@ def extract_date_ranges(spans: list[dict], ref_date: date | None = None) -> list
     }
     """
     ranges: list[dict] = []
-    full_text_per_page: dict[int, tuple[str, int | None]] = {}
 
     # Concatenate spans per page so cross-span date ranges are caught
     page_texts: dict[int, list[str]] = {}
@@ -796,8 +834,15 @@ def run_all_detectors(
     signals.extend(detect_hidden_text(spans, background_color, hidden_text_threshold))
     signals.extend(detect_offpage_or_zero_size(spans, page_dims, hidden_size_threshold))
 
-    date_ranges = extract_date_ranges(spans, ref_date=reference_date)
-    signals.extend(detect_timeline_issues(date_ranges, ref_date=reference_date))
+    # FIX (crash bug): wrapped in try/except so a future edge case in date
+    # parsing degrades gracefully (skips just the timeline signals) instead
+    # of taking down the entire /scan request with a 500 error. Every other
+    # detector's results still reach the user even if this one misbehaves.
+    try:
+        date_ranges = extract_date_ranges(spans, ref_date=reference_date)
+        signals.extend(detect_timeline_issues(date_ranges, ref_date=reference_date))
+    except Exception:  # noqa: BLE001
+        pass
 
     # ── Phase 5 additions ───────────────────────────────────────────────────
     signals.extend(detect_layer_order_mismatch(word_order))
