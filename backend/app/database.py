@@ -37,6 +37,26 @@ def init_db():
                         conn.execute(text("ALTER TABLE scan_results ADD COLUMN share_token VARCHAR(64)"))
                     if "share_token_created_at" not in existing_cols:
                         conn.execute(text("ALTER TABLE scan_results ADD COLUMN share_token_created_at DATETIME"))
+                    # Phase 7 — Explainable Risk Engine
+                    if "forensic_risk_score" not in existing_cols:
+                        conn.execute(text("ALTER TABLE scan_results ADD COLUMN forensic_risk_score FLOAT"))
+                    conn.commit()
+
+                # fraud_signals explainability columns
+                res_fs = conn.execute(text("PRAGMA table_info(fraud_signals)"))
+                fs_cols = {row[1] for row in res_fs.fetchall()}
+                if fs_cols:
+                    for col_def in [
+                        ("risk_points",       "INTEGER"),
+                        ("evidence_strength", "VARCHAR(16)"),
+                        ("confidence",        "VARCHAR(8)"),
+                        ("remediation",       "TEXT"),
+                        ("evidence_json",     "TEXT"),
+                    ]:
+                        if col_def[0] not in fs_cols:
+                            conn.execute(text(
+                                f"ALTER TABLE fraud_signals ADD COLUMN {col_def[0]} {col_def[1]}"
+                            ))
                     conn.commit()
 
                 res2 = conn.execute(text("PRAGMA table_info(org_settings)"))

@@ -33,6 +33,7 @@ from app.services.ocr_helper import ocr_page_text
 from app.services.pdf_extractor import extract_pdf
 from app.services.trust_score import compute_trust_score
 from app.services.resume_validator import is_likely_resume
+from app.services.risk_config import compute_risk_score
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scan", tags=["scan"])
@@ -166,7 +167,13 @@ def _execute_pdf_scan(
             bbox_y0=bbox[1] if bbox else None,
             bbox_x1=bbox[2] if bbox else None,
             bbox_y1=bbox[3] if bbox else None,
+            # Phase 7 — Explainability fields
+            risk_points=sig.get("risk_points"),
+            evidence_strength=sig.get("evidence_strength"),
+            confidence=sig.get("confidence"),
+            remediation=sig.get("remediation"),
         )
+        fs.set_evidence(sig.get("evidence"))
         db.add(fs)
         severity_counts[sig["severity"]] = severity_counts.get(sig["severity"], 0) + 1
 
@@ -237,7 +244,7 @@ def _execute_pdf_scan(
         ocr = ocr_page_text(dest_path, page_stat["page"])
         ocr_results.append({"page": page_stat["page"], **ocr})
 
-    # ── Trust Score badge ────────────────────────────────────────────────────
+    # ── Trust Score (with new forensic risk scoring) ──────────────────────────
     fraud_summary_for_score = {
         "total": scan.total_signals,
         "high": scan.high_count,
@@ -249,9 +256,11 @@ def _execute_pdf_scan(
         fraud_summary=fraud_summary_for_score,
         ai_content_score=scan.ai_content_score,
         true_match_score=scan.true_match_score,
+        signals=signals,   # ← NEW: enables per-category risk-point calculation
     )
-    scan.trust_score = trust["score"]
-    scan.trust_label = trust["label"]
+    scan.trust_score          = trust["score"]
+    scan.trust_label          = trust["label"]
+    scan.forensic_risk_score  = trust["forensic_risk_score"]
     db.commit()
 
     # ── Explainability Narrative ─────────────────────────────────────────────
@@ -279,12 +288,18 @@ def _execute_pdf_scan(
             "low":    scan.low_count,
             "signals": [
                 {
-                    "signal_type": s["signal_type"],
-                    "severity":    s["severity"],
-                    "page":        s["page"],
-                    "description": s["description"],
-                    "evidence_text": s.get("evidence_text"),
-                    "bbox": list(s["bbox"]) if s.get("bbox") else None,
+                    "signal_type":       s["signal_type"],
+                    "severity":          s["severity"],
+                    "page":              s["page"],
+                    "description":       s["description"],
+                    "evidence_text":     s.get("evidence_text"),
+                    "bbox":              list(s["bbox"]) if s.get("bbox") else None,
+                    # Phase 7 explainability fields
+                    "risk_points":       s.get("risk_points"),
+                    "evidence_strength": s.get("evidence_strength"),
+                    "confidence":        s.get("confidence"),
+                    "remediation":       s.get("remediation"),
+                    "evidence":          s.get("evidence"),
                 }
                 for s in signals
             ],
@@ -296,7 +311,7 @@ def _execute_pdf_scan(
         },
         "true_match":  match_result,
         "sample_spans": _serialise_spans(extracted["spans"][:10]),
-        "trust_score":  trust,
+        "trust_score":  trust,   # now includes forensic_risk_score + risk_breakdown
         "narrative":    narrative,
         "word_order":   extracted.get("word_order", []),
         "image_pages":  image_pages,
@@ -429,6 +444,7 @@ async def create_batch_scan(
                 "sha256": scan_out["sha256"],
                 "page_count": scan_out["page_count"],
                 "trust_score": scan_out["trust_score"]["score"],
+                "forensic_risk_score": scan_out["trust_score"].get("forensic_risk_score", 0),
                 "trust_label": scan_out["trust_score"]["label"],
                 "trust_emoji": scan_out["trust_score"]["emoji"],
                 "high_fraud_signals": scan_out["fraud_summary"]["high"],
@@ -472,7 +488,11 @@ async def create_batch_scan(
                     severity="high",
                     page=1,
                     description=f"Near-duplicate template or copy-pasted content detected. {match['similarity_score']}% similarity with {other_filename}.",
-                    evidence_text=" | ".join(match["shared_phrases"])
+                    evidence_text=" | ".join(match["shared_phrases"]),
+                    risk_points=15,
+                    evidence_strength="STRONG",
+                    confidence="high",
+                    remediation="Investigate whether multiple candidates submitted near-identical resumes or used the same template."
                 )
                 db.add(fs)
                 affected_scan_ids.add(target_id)
@@ -496,24 +516,31 @@ async def create_batch_scan(
                 scan.total_signals += 1
                 scan.high_count += 1
                 
+                sigs_list = [
+                    {"signal_type": s.signal_type, "severity": s.severity, "risk_points": s.risk_points or 0}
+                    for s in scan.signals
+                ]
                 fraud_summary_for_score = {
                     "total": scan.total_signals,
                     "high": scan.high_count,
                     "medium": scan.medium_count,
                     "low": scan.low_count,
-                    "signals": []
+                    "signals": sigs_list,
                 }
                 trust = compute_trust_score(
                     fraud_summary=fraud_summary_for_score,
                     ai_content_score=scan.ai_content_score,
-                    true_match_score=scan.true_match_score
+                    true_match_score=scan.true_match_score,
+                    signals=sigs_list,
                 )
                 scan.trust_score = trust["score"]
                 scan.trust_label = trust["label"]
+                scan.forensic_risk_score = trust["forensic_risk_score"]
                 
                 for r in results:
                     if r["scan_id"] == s_id:
                         r["trust_score"] = trust["score"]
+                        r["forensic_risk_score"] = trust["forensic_risk_score"]
                         r["trust_label"] = trust["label"]
                         r["trust_emoji"] = trust["emoji"]
                         r["high_fraud_signals"] = scan.high_count
@@ -544,6 +571,7 @@ class ScanHistoryItem(BaseModel):
     scanned_at: Optional[str] = None
     trust_score: Optional[float] = None
     trust_label: Optional[str] = None
+    forensic_risk_score: Optional[float] = None
     ai_content_score: Optional[float] = None
     true_match_score: Optional[float] = None
     total_signals: int = 0
@@ -628,6 +656,7 @@ def list_scans(
             scanned_at=s.scanned_at.isoformat() if s.scanned_at else None,
             trust_score=s.trust_score,
             trust_label=s.trust_label,
+            forensic_risk_score=s.forensic_risk_score,
             ai_content_score=s.ai_content_score,
             true_match_score=s.true_match_score,
             total_signals=s.total_signals or 0,
@@ -676,29 +705,40 @@ def get_scan(
 
     signals_out = [
         {
-            "id":          sig.id,
-            "signal_type": sig.signal_type,
-            "severity":    sig.severity,
-            "page":        sig.page,
-            "bbox":        sig.bbox,
-            "description": sig.description,
-            "evidence_text": sig.evidence_text,
+            "id":                sig.id,
+            "signal_type":       sig.signal_type,
+            "severity":          sig.severity,
+            "page":              sig.page,
+            "bbox":              sig.bbox,
+            "description":       sig.description,
+            "evidence_text":     sig.evidence_text,
+            "risk_points":       sig.risk_points,
+            "evidence_strength": sig.evidence_strength,
+            "confidence":        sig.confidence,
+            "remediation":       sig.remediation,
+            "evidence":          sig.get_evidence() if hasattr(sig, "get_evidence") else None,
         }
         for sig in scan.signals
     ]
 
     fraud_summary = {
-        "total":  scan.total_signals,
-        "high":   scan.high_count,
-        "medium": scan.medium_count,
-        "low":    scan.low_count,
+        "total":   scan.total_signals,
+        "high":    scan.high_count,
+        "medium":  scan.medium_count,
+        "low":     scan.low_count,
         "signals": signals_out,
     }
+
+    risk_calc = compute_risk_score(signals_out)
+    forensic_risk = scan.forensic_risk_score if scan.forensic_risk_score is not None else risk_calc["total"]
+    risk_breakdown = risk_calc["breakdown"]
 
     trust_dict = {
         "score": scan.trust_score,
         "label": scan.trust_label,
         "emoji": {"Verified": "🟢", "Caution": "🟡", "High Risk": "🔴"}.get(scan.trust_label, ""),
+        "forensic_risk_score": forensic_risk,
+        "risk_breakdown": risk_breakdown,
     }
 
     high_bboxes = [sig.bbox for sig in scan.signals if sig.severity == "high" and sig.bbox]
@@ -727,22 +767,24 @@ def get_scan(
     )
 
     return {
-        "scan_id":    scan.id,
-        "resume_id":  scan.resume_id,
-        "filename":   scan.resume.filename,
-        "status":     scan.status,
-        "scanned_at": scan.scanned_at.isoformat() if scan.scanned_at else None,
-        "fraud_summary": fraud_summary,
-        "signals":     signals_out,
-        "ai_content_score": scan.ai_content_score,
-        "ai_content":  ai_content,
-        "true_match_score": scan.true_match_score,
-        "trust_score": scan.trust_score,
-        "trust_label": scan.trust_label,
-        "span_count":  len(all_spans),
-        "spans":       _serialise_spans(all_spans),
-        "narrative":   narrative,
-        "share_token": scan.share_token,
+        "scan_id":             scan.id,
+        "resume_id":           scan.resume_id,
+        "filename":            scan.resume.filename,
+        "status":              scan.status,
+        "scanned_at":          scan.scanned_at.isoformat() if scan.scanned_at else None,
+        "fraud_summary":       fraud_summary,
+        "signals":             signals_out,
+        "ai_content_score":    scan.ai_content_score,
+        "ai_content":          ai_content,
+        "true_match_score":    scan.true_match_score,
+        "trust_score":         scan.trust_score,
+        "trust_label":         scan.trust_label,
+        "forensic_risk_score": forensic_risk,
+        "risk_breakdown":      risk_breakdown,
+        "span_count":          len(all_spans),
+        "spans":               _serialise_spans(all_spans),
+        "narrative":           narrative,
+        "share_token":         scan.share_token,
     }
 
 
@@ -923,6 +965,7 @@ def get_public_scan_result(share_token: str, db: Session = Depends(get_db)):
         "score": scan.trust_score,
         "label": scan.trust_label,
         "emoji": {"Verified": "🟢", "Caution": "🟡", "High Risk": "🔴"}.get(scan.trust_label, ""),
+        "forensic_risk_score": scan.forensic_risk_score,
     }
 
     ai_content = {
@@ -942,6 +985,7 @@ def get_public_scan_result(share_token: str, db: Session = Depends(get_db)):
         "scanned_at": scan.scanned_at.isoformat() if scan.scanned_at else None,
         "trust_score": scan.trust_score,
         "trust_label": scan.trust_label,
+        "forensic_risk_score": scan.forensic_risk_score,
         "ai_content_score": scan.ai_content_score,
         "true_match_score": scan.true_match_score,
         "narrative": {

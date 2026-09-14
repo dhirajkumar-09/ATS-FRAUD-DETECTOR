@@ -201,7 +201,7 @@ export default function HistoryPage() {
                         item.trust_label || 'Unknown'
                       )}`}
                     >
-                      {item.trust_label || 'Pending'} · {item.trust_score != null ? Math.round(item.trust_score) : 0}%
+                      {item.trust_label || 'Pending'} · {item.trust_score != null ? Math.round(item.trust_score) : 0}/100
                     </Badge>
                   </TableCell>
 

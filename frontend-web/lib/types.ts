@@ -40,6 +40,11 @@ export interface FraudSignal {
   description: string;
   page?: number | null;
   detail?: string | null;
+  risk_points?: number | null;
+  evidence_strength?: 'DEFINITIVE' | 'STRONG' | 'MODERATE' | 'WEAK' | 'PROBABILISTIC' | string | null;
+  confidence?: 'high' | 'medium' | 'low' | string | null;
+  remediation?: string | null;
+  evidence?: Record<string, unknown> | null;
 }
 
 export interface Narrative {
@@ -64,12 +69,14 @@ export interface ScanResult {
   scan_id: string | number;
   share_token?: string | null;
   filename: string;
-  trust_score: number;          // 0-1
+  trust_score: number;          // 0-100 scale
   trust_label: TrustLabel;
+  forensic_risk_score?: number; // 0-100 scale
+  risk_breakdown?: Record<string, number>;
   fraud_signals: FraudSignal[];
   fraud_summary: string;        // human-readable summary text
-  ai_content_score: number;     // 0-1
-  true_match_score: number | null; // 0-1 or null
+  ai_content_score: number;     // 0-100 scale
+  true_match_score: number | null; // 0-100 scale or null
   narrative: Narrative;
   paragraph_ai_breakdown?: AIParagraphBreakdown[];
   created_at?: string;
@@ -82,7 +89,13 @@ export interface RawPostScanResponse {
   scan_id: number;
   share_token?: string | null;
   filename: string;
-  trust_score: { score: number; label: string; emoji?: string };
+  trust_score: { 
+    score: number; 
+    label: string; 
+    emoji?: string;
+    forensic_risk_score?: number;
+    risk_breakdown?: Record<string, number>;
+  };
   fraud_summary: {
     total: number;
     high: number;
@@ -107,6 +120,8 @@ export interface RawGetScanResponse {
   filename: string;
   trust_score: number;
   trust_label: string;
+  forensic_risk_score?: number;
+  risk_breakdown?: Record<string, number>;
   ai_content_score: number;
   true_match_score: number | null;
   fraud_summary: {
@@ -129,6 +144,7 @@ export interface RawBatchItem {
   filename: string;
   trust_score: number;
   trust_label: string;
+  forensic_risk_score?: number;
   ai_content_score: number;
   true_match_score: number | null;
   total_fraud_signals: number;
@@ -159,6 +175,11 @@ export interface RawSignal {
   description: string;
   evidence_text?: string | null;
   bbox?: number[] | null;
+  risk_points?: number | null;
+  evidence_strength?: string | null;
+  confidence?: string | null;
+  remediation?: string | null;
+  evidence?: Record<string, unknown> | null;
 }
 
 // ── Inspect Types ─────────────────────────────────────────────────────────────
@@ -200,6 +221,7 @@ export interface ScanHistoryItem {
   scanned_at?: string | null;
   trust_score?: number | null;
   trust_label?: string | null;
+  forensic_risk_score?: number | null;
   ai_content_score?: number | null;
   true_match_score?: number | null;
   total_signals: number;

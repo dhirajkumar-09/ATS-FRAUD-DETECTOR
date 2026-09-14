@@ -94,8 +94,12 @@ class ScanResult(Base):
     ai_content_score  = Column(Float, nullable=True)
 
     # Phase 5 — composite Trust Score badge
-    trust_score  = Column(Float, nullable=True)   # 0-100
-    trust_label  = Column(String(32), nullable=True)   # Verified | Caution | High Risk
+    trust_score          = Column(Float, nullable=True)   # 0-100 (composite: fraud+AI+match)
+    trust_label          = Column(String(32), nullable=True)   # Verified | Caution | High Risk
+
+    # Phase 7 — Explainable Risk Engine
+    # Pure document-forensic score: sum of detected risk points (capped at 100).
+    forensic_risk_score  = Column(Float, nullable=True)   # 0-100
 
     # Share link fields
     share_token  = Column(String(64), unique=True, nullable=True, index=True)
@@ -131,11 +135,36 @@ class FraudSignal(Base):
     # Raw snippet of offending text (truncated to 500 chars)
     evidence_text = Column(Text, nullable=True)
 
+    # Phase 7 — Explainability fields
+    risk_points       = Column(Integer, nullable=True)   # points contributed to risk score
+    evidence_strength = Column(String(16), nullable=True)   # DEFINITIVE|STRONG|MODERATE|WEAK|PROBABILISTIC
+    confidence        = Column(String(8),  nullable=True)   # high | medium | low
+    remediation       = Column(Text,       nullable=True)   # advice for the UI
+    evidence_json     = Column(Text,       nullable=True)   # JSON-encoded evidence dict
+
     scan_result = relationship("ScanResult", back_populates="signals")
 
     @property
     def bbox(self):
         return (self.bbox_x0, self.bbox_y0, self.bbox_x1, self.bbox_y1)
+
+    def get_evidence(self) -> dict:
+        """Deserialise the JSON evidence dict (empty dict if not stored)."""
+        if self.evidence_json:
+            import json
+            try:
+                return json.loads(self.evidence_json)
+            except Exception:
+                return {}
+        return {}
+
+    def set_evidence(self, evidence: dict | None) -> None:
+        """Serialise the evidence dict for storage."""
+        if evidence:
+            import json
+            self.evidence_json = json.dumps(evidence)
+        else:
+            self.evidence_json = None
 
 
 # ── DuplicateMatch ─────────────────────────────────────────────────────────────

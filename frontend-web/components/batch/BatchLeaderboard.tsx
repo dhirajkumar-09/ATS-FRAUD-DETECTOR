@@ -96,7 +96,7 @@ export default function BatchLeaderboard({ results, duplicates }: Props) {
               <div className="w-16 h-1.5 rounded-full bg-[#0D0F14] overflow-hidden flex-shrink-0">
                 <motion.div
                   initial={{ width: 0 }}
-                  animate={{ width: `${Math.round(r.trust_score * 100)}%` }}
+                  animate={{ width: `${r.trust_score > 1 ? Math.round(r.trust_score) : Math.round(r.trust_score * 100)}%` }}
                   transition={{ duration: 0.8, delay: rank * 0.05 }}
                   className="h-full rounded-full"
                   style={{ backgroundColor: color }}
@@ -108,7 +108,7 @@ export default function BatchLeaderboard({ results, duplicates }: Props) {
                 className="text-sm font-bold font-mono w-10 flex-shrink-0"
                 style={{ color }}
               >
-                {Math.round(r.trust_score * 100)}
+                {r.trust_score > 1 ? Math.round(r.trust_score) : Math.round(r.trust_score * 100)}
               </span>
 
               {/* Trust label badge */}

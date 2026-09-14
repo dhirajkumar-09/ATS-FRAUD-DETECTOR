@@ -126,8 +126,12 @@ def generate_score_narrative(
             "and absence of ATS manipulation tactics."
         )
 
+    forensic_risk = trust_score.get("forensic_risk_score")
+    risk_text = f" Forensic Risk Score: {forensic_risk}/100." if forensic_risk is not None else ""
+
     summary = (
-        f"Candidate received a composite Trust Score of {score:.1f}/100 ({label}). "
+        f"Trust Score: {score:.1f}/100 ({label}).{risk_text} "
+        "Score represents detected document-risk indicators according to our forensic scoring model. "
         + (" ".join(factors[:2]))
     )
     
@@ -137,8 +141,8 @@ def generate_score_narrative(
 
     limitations = (
         "Forensic Note: Fraud signals reflect deterministic document structure anomalies (Unicode codepoints, "
-        "color vectors, content streams). AI-content scoring is heuristic and probabilistic — treat elevated AI scores "
-        "as an investigative signal rather than absolute proof of authorship."
+        "color vectors, content streams). AI-content detection is probabilistic and should not be used as the sole "
+        "basis for rejecting a candidate."
     )
     if font_sub_flag:
         limitations += " Additionally, Font Substitution detection currently uses a heuristic based on high ATS keyword density in subset fonts; true CMap validation is a best-effort approximation."

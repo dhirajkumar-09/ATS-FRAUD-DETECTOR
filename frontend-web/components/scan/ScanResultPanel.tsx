@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
   Download, Search, Award, Brain, Target,
   Sparkles, FileText, Loader2, ChevronRight,
-  Link, Copy, Check, Trash2, Globe
+  Link, Copy, Check, Trash2, Globe, ShieldAlert, HelpCircle, ChevronDown
 } from 'lucide-react';
 import { toast } from 'sonner';
 import TrustGauge from './TrustGauge';
@@ -186,9 +186,16 @@ export default function ScanResultPanel({ result }: Props) {
     }
   };
 
+  const [whyScoreOpen, setWhyScoreOpen] = useState(false);
+
+  const trustScoreNum = Math.round(result.trust_score ?? 0);
+  const forensicRisk = result.forensic_risk_score ?? Math.max(0, 100 - trustScoreNum);
+  const riskBreakdown = result.risk_breakdown ?? {};
+
   const aiScore = result.ai_content_score;
   const matchScore = result.true_match_score;
-  const aiColor = (aiScore ?? 0) >= 0.7 ? '#E05252' : (aiScore ?? 0) >= 0.4 ? '#E09C52' : '#3CB697';
+  const aiColor = (aiScore ?? 0) >= 70 ? '#E05252' : (aiScore ?? 0) >= 40 ? '#E09C52' : '#3CB697';
+  const riskColor = forensicRisk > 40 ? '#E05252' : forensicRisk > 15 ? '#E09C52' : '#3CB697';
 
   return (
     <motion.div
@@ -210,21 +217,31 @@ export default function ScanResultPanel({ result }: Props) {
 
         <div className="flex flex-col sm:flex-row gap-6 items-center sm:items-start">
           {/* Trust gauge */}
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 flex flex-col items-center">
             <TrustGauge score={result.trust_score} label={result.trust_label} size={156} />
+            <span className="text-[10px] text-[#8A90A4] mt-2 text-center max-w-[160px] leading-tight">
+              Score represents detected document-risk indicators per our forensic model.
+            </span>
           </div>
 
           {/* Metrics grid + actions */}
           <div className="flex-1 w-full space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <MetricCard
-                label="AI Content"
+                label="Forensic Risk"
+                value={`${forensicRisk}/100`}
+                icon={ShieldAlert}
+                color={riskColor}
+                sublabel={`Verdict: ${result.trust_label ?? 'Unknown'}`}
+              />
+              <MetricCard
+                label="AI Content Signal"
                 value={formatPercent(aiScore)}
                 icon={Brain}
                 color={aiColor}
                 sublabel={
-                  (aiScore ?? 0) >= 0.7 ? 'Likely AI-written'
-                  : (aiScore ?? 0) >= 0.4 ? 'Possibly AI-written'
+                  (aiScore ?? 0) >= 70 ? 'Likely AI-written'
+                  : (aiScore ?? 0) >= 40 ? 'Possibly AI-written'
                   : 'Likely human-written'
                 }
               />
@@ -237,8 +254,78 @@ export default function ScanResultPanel({ result }: Props) {
               />
             </div>
 
+            {/* AI Content Disclaimer */}
+            <div className="text-[10px] text-[#8A90A4]/80 flex items-center gap-1.5 px-1">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#8A90A4] flex-shrink-0" />
+              <span>AI-content detection is probabilistic and should not be used as the sole basis for rejecting a candidate.</span>
+            </div>
+
+            {/* "Why this score?" Accordion Trigger */}
+            <div className="pt-0.5">
+              <button
+                onClick={() => setWhyScoreOpen((o) => !o)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-[#3CB697] hover:underline cursor-pointer"
+                aria-expanded={whyScoreOpen}
+              >
+                <HelpCircle size={13} />
+                <span>Why this score? (Explainable Breakdown)</span>
+                <ChevronDown size={13} className={cn("transition-transform duration-200", whyScoreOpen ? "rotate-180" : "")} />
+              </button>
+            </div>
+
+            {/* "Why this score?" Collapsible Table */}
+            {whyScoreOpen && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="rounded-xl bg-[#0F1118] border border-[rgba(60,182,151,0.18)] p-4 space-y-3"
+              >
+                <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#E8E6DF]">
+                    Risk Points Scoring Model (Max 100 Points)
+                  </span>
+                  <span className="text-[11px] font-mono text-[#8A90A4]">
+                    Trust Score = 100 − Risk Score
+                  </span>
+                </div>
+                <div className="space-y-1.5 text-xs font-mono">
+                  {[
+                    { label: 'Hidden / Invisible Text',      key: 'hidden_text',      max: 25 },
+                    { label: 'Zero-width Unicode',           key: 'zero_width_chars', max: 15 },
+                    { label: 'Homoglyph / Mixed Script',     key: 'homoglyph',        max: 15 },
+                    { label: 'Off-page / Abnormal Position', key: 'offpage',          max: 15 },
+                    { label: 'Font / Rendering Anomaly',     key: 'font_anomaly',     max: 10 },
+                    { label: 'PDF Metadata / Structure',     key: 'metadata',         max: 10 },
+                    { label: 'Prompt Injection',             key: 'prompt_injection', max: 10 },
+                  ].map((cat) => {
+                    const pts = (riskBreakdown as Record<string, number>)[cat.key] ?? 0;
+                    return (
+                      <div key={cat.key} className="flex justify-between items-center py-1 px-2 rounded hover:bg-white/[0.02]">
+                        <span className="text-[#8A90A4]">{cat.label}</span>
+                        <span className={cn(pts > 0 ? "text-[#E05252] font-bold" : "text-[#8A90A4]")}>
+                          {pts} / {cat.max}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div className="border-t border-white/10 pt-2 mt-2 flex justify-between font-bold text-sm">
+                    <span className="text-[#E8E6DF]">TOTAL RISK SCORE</span>
+                    <span className="text-[#E05252]">{forensicRisk} / 100</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-sm text-[#3CB697]">
+                    <span>TRUST SCORE</span>
+                    <span>{trustScoreNum} / 100</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-[#8A90A4] leading-relaxed pt-2 border-t border-white/5">
+                  Every risk point comes directly from verifiable forensic detections performed on the uploaded PDF. Scores are deterministic and reproducible.
+                </p>
+              </motion.div>
+            )}
+
             {/* Action buttons */}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 pt-1">
               <ActionBtn
                 onClick={() => router.push(`/dashboard/inspect/${result.scan_id}`)}
                 icon={Search}

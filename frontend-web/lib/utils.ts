@@ -62,12 +62,12 @@ export function getTrustBadgeClass(label: TrustLabel | string): string {
 
 export function formatScore(score: number): string {
   if (score == null || isNaN(score)) return '0.0';
-  return (score * 100).toFixed(1);
+  return score.toFixed(1);
 }
 
 export function formatPercent(value: number): string {
   if (value == null || isNaN(value)) return '0%';
-  return `${Math.round(value * 100)}%`;
+  return `${Math.round(value)}%`;
 }
 
 export function formatDate(iso: string): string {

@@ -75,7 +75,7 @@ export default function CandidatePublicView() {
 
   const aiScore = ai_content_score;
   const matchScore = true_match_score;
-  const aiColor = (aiScore ?? 0) >= 0.7 ? '#E05252' : (aiScore ?? 0) >= 0.4 ? '#E09C52' : '#3CB697';
+  const aiColor = (aiScore ?? 0) >= 70 ? '#E05252' : (aiScore ?? 0) >= 40 ? '#E09C52' : '#3CB697';
 
   return (
     <div className="min-h-screen bg-[#0B0D12] text-[#E8E6DF] py-12 px-4 sm:px-6 font-sans">
@@ -101,10 +101,10 @@ export default function CandidatePublicView() {
               <TrustGauge score={trust_score ?? 0} size={160} label={trust_label} />
             </div>
             <div className="flex-1 text-center md:text-left space-y-2">
-              <h2 className="text-lg font-semibold" style={{ fontFamily: 'var(--font-space-grotesk)' }}>Overall Trust Score</h2>
+              <h2 className="text-lg font-semibold" style={{ fontFamily: 'var(--font-space-grotesk)' }}>Trust Score: {Math.round(trust_score ?? 0)}/100</h2>
               <p className="text-sm text-[#8A90A4] leading-relaxed">
-                This score represents the structural integrity and authenticity of the document formatting.
-                Lower scores indicate non-standard formatting, hidden text, or unusual fonts that automated ATS systems struggle to read correctly.
+                Score represents detected document-risk indicators according to our forensic scoring model.
+                Lower scores indicate non-standard formatting, hidden text, zero-width characters, or unusual fonts that automated ATS systems struggle to read correctly.
               </p>
             </div>
           </div>
@@ -116,6 +116,9 @@ export default function CandidatePublicView() {
               <span className="text-2xl font-bold tabular-nums" style={{ color: aiColor, fontFamily: 'var(--font-space-grotesk)' }}>
                 {formatPercent(aiScore ?? 0)}
               </span>
+              <p className="text-[10px] text-[#8A90A4]/80 mt-2 leading-tight">
+                AI-content detection is probabilistic and should not be used as the sole basis for rejecting a candidate.
+              </p>
             </div>
             <div className="bg-[#131620] rounded-2xl border border-[rgba(255,255,255,0.05)] p-5 flex flex-col items-center justify-center text-center flex-1">
               <Target size={20} className="text-[#3B82F6] mb-2" />

@@ -21,6 +21,11 @@ function normalizeSignal(raw: RawSignal): FraudSignal {
     description: raw.description,
     page: raw.page ?? null,
     detail: raw.evidence_text ?? null,
+    risk_points: raw.risk_points ?? null,
+    evidence_strength: raw.evidence_strength ?? null,
+    confidence: raw.confidence ?? null,
+    remediation: raw.remediation ?? null,
+    evidence: raw.evidence ?? null,
   };
 }
 
@@ -36,11 +41,18 @@ function transformPostScan(raw: RawPostScanResponse): ScanResult {
       ? 'No fraud signals detected in this resume.'
       : `${total} signal${total > 1 ? 's' : ''} detected (${high} high severity).`;
 
+  const trustScore = raw.trust_score?.score ?? 0;
+  const forensicRiskScore = raw.trust_score?.forensic_risk_score ?? Math.max(0, 100 - trustScore);
+  const riskBreakdown = raw.trust_score?.risk_breakdown ?? {};
+
   return {
     scan_id:          raw.scan_id,
+    share_token:      raw.share_token ?? null,
     filename:         raw.filename,
-    trust_score:      raw.trust_score?.score ?? 0,
+    trust_score:      trustScore,
     trust_label:      raw.trust_score?.label ?? 'UNKNOWN',
+    forensic_risk_score: forensicRiskScore,
+    risk_breakdown:   riskBreakdown,
     fraud_signals:    signals,
     fraud_summary:    fraudSummaryText,
     ai_content_score: raw.ai_content?.score ?? 0,
@@ -62,11 +74,17 @@ function transformGetScan(raw: RawGetScanResponse): ScanResult {
       ? 'No fraud signals detected in this resume.'
       : `${total} signal${total > 1 ? 's' : ''} detected (${high} high severity).`;
 
+  const trustScore = raw.trust_score ?? 0;
+  const forensicRiskScore = raw.forensic_risk_score ?? Math.max(0, 100 - trustScore);
+  const riskBreakdown = raw.risk_breakdown ?? {};
+
   return {
     scan_id:          raw.scan_id,
     filename:         raw.filename,
-    trust_score:      raw.trust_score ?? 0,
+    trust_score:      trustScore,
     trust_label:      raw.trust_label ?? 'UNKNOWN',
+    forensic_risk_score: forensicRiskScore,
+    risk_breakdown:   riskBreakdown,
     fraud_signals:    signals,
     fraud_summary:    fraudSummaryText,
     ai_content_score: raw.ai_content_score ?? 0,
@@ -115,6 +133,7 @@ export async function scanBatch(
     filename:         item.filename,
     trust_score:      item.trust_score ?? 0,
     trust_label:      item.trust_label ?? 'UNKNOWN',
+    forensic_risk_score: item.forensic_risk_score ?? Math.max(0, 100 - (item.trust_score ?? 0)),
     fraud_signals:    [],   // not included in batch summary
     fraud_summary:    `${item.total_fraud_signals ?? 0} signal(s), ${item.high_fraud_signals ?? 0} high severity.`,
     ai_content_score: item.ai_content_score ?? 0,

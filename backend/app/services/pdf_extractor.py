@@ -231,14 +231,18 @@ def _extract_with_pymupdf(
                 "height": page_h,
             })
 
-            raw = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+            # Expand clip so off-page text positioned outside page dimensions can be extracted and flagged
+            expanded_clip = fitz.Rect(-2000, -2000, page_w + 2000, page_h + 2000)
+            raw = page.get_text("rawdict", clip=expanded_clip, flags=fitz.TEXT_PRESERVE_WHITESPACE)
             page_char_count = 0
             for block_index, block in enumerate(raw.get("blocks", [])):
                 if block.get("type") != 0:   # 0 = text block
                     continue
                 for line in block.get("lines", []):
                     for span in line.get("spans", []):
-                        text = span.get("text", "")
+                        text = span.get("text")
+                        if text is None and "chars" in span:
+                            text = "".join(c.get("c", "") for c in span["chars"])
                         if not text:
                             continue
                         page_char_count += len(text.strip())
