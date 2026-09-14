@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import { ScanLine, Loader2, FileText, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import FileDropZone from '@/components/scan/FileDropZone';
 import ScanResultPanel from '@/components/scan/ScanResultPanel';
 import { scanSingle } from '@/lib/api/scan';
+import { cn } from '@/lib/utils';
 import type { ScanResult } from '@/lib/types';
 
 // ── Animation Variants (matching layout.tsx & Sidebar.tsx conventions) ──────
@@ -36,6 +37,13 @@ export default function ScanPage() {
   const [loading, setLoading] = useState(false);
   const [scanTriggered, setScanTriggered] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (result && !loading && resultRef.current) {
+      resultRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [result, loading]);
 
   const handleScan = async () => {
     if (!file || loading) return;
@@ -52,9 +60,19 @@ export default function ScanPage() {
       setResult(res);
       toast.success('Forensic scan complete!');
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        'Scan failed. Please try again.';
+      const errorObj = err as {
+        code?: string;
+        message?: string;
+        response?: { data?: { detail?: string } };
+      };
+      let msg = 'Scan failed. Please try again.';
+      if (errorObj?.response?.data?.detail) {
+        msg = errorObj.response.data.detail;
+      } else if (errorObj?.code === 'ERR_NETWORK' || !errorObj?.response) {
+        msg = 'Cannot connect to backend server. Make sure backend is running on http://localhost:8000.';
+      } else if (errorObj?.message) {
+        msg = errorObj.message;
+      }
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -138,7 +156,12 @@ export default function ScanPage() {
               disabled={!file || loading}
               whileHover={{ scale: !file || loading ? 1 : 1.006 }}
               whileTap={{ scale: !file || loading ? 1 : 0.98 }}
-              className="w-full flex items-center justify-center gap-2.5 py-3.5 rounded-xl text-sm font-bold bg-[#3CB697] text-[#0B0D12] hover:bg-[#3CB697]/92 hover:shadow-[0_0_30px_rgba(60,182,151,0.36)] disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 cursor-pointer disabled:cursor-not-allowed"
+              className={cn(
+                "w-full flex items-center justify-center gap-2.5 py-3.5 rounded-xl text-sm font-bold bg-[#3CB697] text-[#0B0D12] hover:bg-[#3CB697]/92 transition-all duration-200 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed",
+                file && !loading && !result
+                  ? "shadow-[0_0_30px_rgba(60,182,151,0.5)] ring-2 ring-[#3CB697]/60"
+                  : "hover:shadow-[0_0_30px_rgba(60,182,151,0.36)]"
+              )}
               style={{ fontFamily: 'var(--font-space-grotesk)' }}
             >
               {loading ? (
@@ -161,7 +184,7 @@ export default function ScanPage() {
                   >
                     <ScanLine size={16} />
                   </motion.div>
-                  Run Forensic Scan
+                  {result ? 'Re-run Forensic Scan' : 'Run Forensic Scan'}
                 </>
               )}
             </motion.button>
@@ -228,6 +251,7 @@ export default function ScanPage() {
         <AnimatePresence>
           {result && !loading && (
             <motion.div
+              ref={resultRef}
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}

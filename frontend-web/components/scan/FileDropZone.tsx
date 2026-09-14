@@ -128,11 +128,14 @@ export default function FileDropZone({
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-[#E8E6DF] truncate">{file.name}</p>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <span className="text-xs text-[#8A90A4]">{formatBytes(file.size)}</span>
                   <span className="text-[#8A90A4]/40 text-xs">·</span>
                   <span className="text-xs text-[#8A90A4] uppercase tracking-wide font-mono">PDF</span>
-                  <CheckCircle2 size={12} className="text-[#3CB697] ml-0.5" />
+                  <span className="text-[#8A90A4]/40 text-xs">·</span>
+                  <span className="text-[11px] font-medium text-[#3CB697] bg-[#3CB697]/10 px-2 py-0.5 rounded-full border border-[#3CB697]/20">
+                    Attached — Click &ldquo;Run Forensic Scan&rdquo; below
+                  </span>
                 </div>
               </div>
               {onClear && (
