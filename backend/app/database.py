@@ -2,10 +2,13 @@
 SQLAlchemy engine + session factory.
 Import `SessionLocal` in routers/services; `engine` is used at startup.
 """
+import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import DATABASE_URL
+
+logger = logging.getLogger(__name__)
 
 # connect_args only needed for SQLite (disables thread check so FastAPI works)
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
@@ -38,12 +41,10 @@ def init_db():
                         conn.execute(text("ALTER TABLE scan_results ADD COLUMN share_token VARCHAR(64)"))
                     if "share_token_created_at" not in existing_cols:
                         conn.execute(text("ALTER TABLE scan_results ADD COLUMN share_token_created_at DATETIME"))
-                    # Phase 7 — Explainable Risk Engine
                     if "forensic_risk_score" not in existing_cols:
                         conn.execute(text("ALTER TABLE scan_results ADD COLUMN forensic_risk_score FLOAT"))
                     conn.commit()
 
-                # fraud_signals explainability columns
                 res_fs = conn.execute(text("PRAGMA table_info(fraud_signals)"))
                 fs_cols = {row[1] for row in res_fs.fetchall()}
                 if fs_cols:
@@ -87,10 +88,12 @@ def init_db():
                     try:
                         conn.execute(text(stmt))
                         conn.commit()
-                    except Exception:
+                        logger.info("Migration OK: %s", stmt)
+                    except Exception as e:
                         conn.rollback()
-    except Exception:
-        pass
+                        logger.error("Migration FAILED: %s | error: %s", stmt, e)
+    except Exception as e:
+        logger.exception("init_db() migration block failed entirely: %s", e)
 
 
 def get_db():
