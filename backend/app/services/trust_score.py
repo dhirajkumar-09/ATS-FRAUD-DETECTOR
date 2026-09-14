@@ -72,17 +72,25 @@ def _fraud_component(
     -------
     (fraud_component_score, forensic_risk_score, risk_breakdown)
     """
-    if signals:
+    if signals is not None:
         risk = compute_risk_score(signals)
-        forensic_risk = risk["total"]
+        forensic_risk = int(round(risk["total"]))
         breakdown     = risk["breakdown"]
     else:
         # Legacy fallback: use severity counts if no signals list provided
         high   = fraud_summary.get("high", 0)
         medium = fraud_summary.get("medium", 0)
         low    = fraud_summary.get("low", 0)
-        forensic_risk = min(100, high * 18 + medium * 8 + low * 3)
-        breakdown     = {}
+        forensic_risk = min(100, int(high * 18 + medium * 8 + low * 3))
+        breakdown     = {
+            "hidden_text": 0,
+            "zero_width_chars": 0,
+            "homoglyph": 0,
+            "offpage": 0,
+            "font_anomaly": 0,
+            "metadata": 0,
+            "prompt_injection": 0,
+        }
 
     fraud_component = max(0.0, 100.0 - forensic_risk)
     return fraud_component, forensic_risk, breakdown

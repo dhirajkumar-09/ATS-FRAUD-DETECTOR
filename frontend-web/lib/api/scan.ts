@@ -29,6 +29,45 @@ function normalizeSignal(raw: RawSignal): FraudSignal {
   };
 }
 
+function buildBreakdownFromSignals(signals: FraudSignal[]): Record<string, number> {
+  const breakdown: Record<string, number> = {
+    hidden_text: 0,
+    zero_width_chars: 0,
+    homoglyph: 0,
+    offpage: 0,
+    font_anomaly: 0,
+    metadata: 0,
+    prompt_injection: 0,
+  };
+  const categoryMap: Record<string, string> = {
+    hidden_text: 'hidden_text',
+    zero_or_tiny_font: 'hidden_text',
+    invisible_characters: 'zero_width_chars',
+    zero_width_chars: 'zero_width_chars',
+    homoglyph_substitution: 'homoglyph',
+    homoglyph: 'homoglyph',
+    offpage_text: 'offpage',
+    offpage: 'offpage',
+    layer_order_mismatch: 'font_anomaly',
+    font_substitution: 'font_anomaly',
+    font_anomaly: 'font_anomaly',
+    image_only_page: 'font_anomaly',
+    stripped_metadata: 'metadata',
+    rapid_lifecycle: 'metadata',
+    generic_producer: 'metadata',
+    metadata: 'metadata',
+    prompt_injection: 'prompt_injection',
+    duplicate_template: 'prompt_injection',
+  };
+  for (const s of signals) {
+    const cat = categoryMap[s.signal_type] ?? 'font_anomaly';
+    if (cat in breakdown) {
+      breakdown[cat] += Math.round(s.risk_points ?? 0);
+    }
+  }
+  return breakdown;
+}
+
 // Transforms POST /scan response → normalised ScanResult
 function transformPostScan(raw: RawPostScanResponse): ScanResult {
   const signals: FraudSignal[] = (raw.fraud_summary?.signals ?? []).map(normalizeSignal);
@@ -41,9 +80,15 @@ function transformPostScan(raw: RawPostScanResponse): ScanResult {
       ? 'No fraud signals detected in this resume.'
       : `${total} signal${total > 1 ? 's' : ''} detected (${high} high severity).`;
 
-  const trustScore = raw.trust_score?.score ?? 0;
-  const forensicRiskScore = raw.trust_score?.forensic_risk_score ?? Math.max(0, 100 - trustScore);
-  const riskBreakdown = raw.trust_score?.risk_breakdown ?? {};
+  const trustScore = Math.round(raw.trust_score?.score ?? 0);
+  const signalRisk = signals.reduce((sum, s) => sum + (s.risk_points ?? 0), 0);
+  const forensicRiskScore = raw.trust_score?.forensic_risk_score != null
+    ? Math.round(raw.trust_score.forensic_risk_score)
+    : Math.round(signalRisk);
+
+  const riskBreakdown = (raw.trust_score?.risk_breakdown && Object.keys(raw.trust_score.risk_breakdown).length > 0)
+    ? raw.trust_score.risk_breakdown
+    : buildBreakdownFromSignals(signals);
 
   return {
     scan_id:          raw.scan_id,
@@ -74,9 +119,16 @@ function transformGetScan(raw: RawGetScanResponse): ScanResult {
       ? 'No fraud signals detected in this resume.'
       : `${total} signal${total > 1 ? 's' : ''} detected (${high} high severity).`;
 
-  const trustScore = raw.trust_score ?? 0;
-  const forensicRiskScore = raw.forensic_risk_score ?? Math.max(0, 100 - trustScore);
-  const riskBreakdown = raw.risk_breakdown ?? {};
+  const trustScore = Math.round(raw.trust_score ?? 0);
+  const signalRisk = signals.reduce((sum, s) => sum + (s.risk_points ?? 0), 0);
+  const rawRisk = raw.forensic_risk_score ?? (raw.trust_score && typeof raw.trust_score === 'object' ? (raw.trust_score as any).forensic_risk_score : null);
+  const forensicRiskScore = rawRisk != null
+    ? Math.round(rawRisk)
+    : Math.round(signalRisk);
+
+  const riskBreakdown = (raw.risk_breakdown && Object.keys(raw.risk_breakdown).length > 0)
+    ? raw.risk_breakdown
+    : buildBreakdownFromSignals(signals);
 
   return {
     scan_id:          raw.scan_id,
@@ -133,7 +185,7 @@ export async function scanBatch(
     filename:         item.filename,
     trust_score:      item.trust_score ?? 0,
     trust_label:      item.trust_label ?? 'UNKNOWN',
-    forensic_risk_score: item.forensic_risk_score ?? Math.max(0, 100 - (item.trust_score ?? 0)),
+    forensic_risk_score: item.forensic_risk_score != null ? Math.round(item.forensic_risk_score) : 0,
     fraud_signals:    [],   // not included in batch summary
     fraud_summary:    `${item.total_fraud_signals ?? 0} signal(s), ${item.high_fraud_signals ?? 0} high severity.`,
     ai_content_score: item.ai_content_score ?? 0,

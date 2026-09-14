@@ -99,7 +99,10 @@ export function buildScanContext(result: ScanResult): string {
     .join('\n') || '  • None detected';
 
   const trustScore = Math.round(result.trust_score ?? 0);
-  const forensicRisk = Math.round(result.forensic_risk_score ?? (100 - trustScore));
+  const forensicRisk = Math.round(
+    result.forensic_risk_score ??
+    (result.fraud_signals ?? []).reduce((acc, s) => acc + (s.risk_points ?? 0), 0)
+  );
   const aiPct = Math.round(result.ai_content_score ?? 0);
   const matchPct = result.true_match_score != null
     ? `${Math.round(result.true_match_score)}%`

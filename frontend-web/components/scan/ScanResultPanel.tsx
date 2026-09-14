@@ -7,7 +7,8 @@ import { useRouter } from 'next/navigation';
 import {
   Download, Search, Award, Brain, Target,
   Sparkles, FileText, Loader2, ChevronRight,
-  Link, Copy, Check, Trash2, Globe, ShieldAlert, HelpCircle, ChevronDown
+  Link, Copy, Check, Trash2, Globe, ShieldAlert, HelpCircle, ChevronDown,
+  CheckCircle2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import TrustGauge from './TrustGauge';
@@ -35,8 +36,17 @@ const containerVariants: Variants = {
 
 const itemVariants: Variants = {
   hidden: { opacity: 0, y: 12 },
-  show:   { opacity: 1, y: 0, transition: { duration: 0.35 } },
 };
+
+const BREAKDOWN_CATEGORIES = [
+  { label: 'Hidden / Invisible Text',      key: 'hidden_text',      max: 25 },
+  { label: 'Zero-width Unicode',           key: 'zero_width_chars', max: 15 },
+  { label: 'Homoglyph / Mixed Script',     key: 'homoglyph',        max: 15 },
+  { label: 'Off-page / Abnormal Position', key: 'offpage',          max: 15 },
+  { label: 'Font / Rendering Anomaly',     key: 'font_anomaly',     max: 10 },
+  { label: 'PDF Metadata / Structure',     key: 'metadata',         max: 10 },
+  { label: 'Prompt Injection',             key: 'prompt_injection', max: 10 },
+] as const;
 
 
 // ── Score metric card ─────────────────────────────────────────────────────────
@@ -189,8 +199,24 @@ export default function ScanResultPanel({ result }: Props) {
   const [whyScoreOpen, setWhyScoreOpen] = useState(false);
 
   const trustScoreNum = Math.round(result.trust_score ?? 0);
-  const forensicRisk = result.forensic_risk_score ?? Math.max(0, 100 - trustScoreNum);
-  const riskBreakdown = result.risk_breakdown ?? {};
+  const riskBreakdown = (result.risk_breakdown ?? {}) as Record<string, number>;
+
+  // Compute breakdown points sum across all 7 forensic categories
+  const breakdownSum = BREAKDOWN_CATEGORIES.reduce((sum, cat) => {
+    return sum + (Number(riskBreakdown[cat.key]) || 0);
+  }, 0);
+
+  const signalSum = (result.fraud_signals ?? []).reduce((sum, s) => sum + (s.risk_points ?? 0), 0);
+  const hasSignals = (result.fraud_signals ?? []).length > 0;
+  const rawRisk = result.forensic_risk_score != null
+    ? result.forensic_risk_score
+    : (breakdownSum > 0 ? breakdownSum : signalSum);
+
+  // If there are zero detected signals and zero breakdown points, risk is strictly 0.
+  // Never fall back to (100 - trustScore) as Trust Score includes AI Content & Job Match weighting.
+  const forensicRisk = (!hasSignals && breakdownSum === 0)
+    ? 0
+    : Math.min(100, Math.max(0, Math.round(rawRisk)));
 
   const aiScore = result.ai_content_score;
   const matchScore = result.true_match_score;
@@ -286,20 +312,12 @@ export default function ScanResultPanel({ result }: Props) {
                     Risk Points Scoring Model (Max 100 Points)
                   </span>
                   <span className="text-[11px] font-mono text-[#8A90A4]">
-                    Trust Score = 100 − Risk Score
+                    Forensic Trust = 100 − Risk
                   </span>
                 </div>
                 <div className="space-y-1.5 text-xs font-mono">
-                  {[
-                    { label: 'Hidden / Invisible Text',      key: 'hidden_text',      max: 25 },
-                    { label: 'Zero-width Unicode',           key: 'zero_width_chars', max: 15 },
-                    { label: 'Homoglyph / Mixed Script',     key: 'homoglyph',        max: 15 },
-                    { label: 'Off-page / Abnormal Position', key: 'offpage',          max: 15 },
-                    { label: 'Font / Rendering Anomaly',     key: 'font_anomaly',     max: 10 },
-                    { label: 'PDF Metadata / Structure',     key: 'metadata',         max: 10 },
-                    { label: 'Prompt Injection',             key: 'prompt_injection', max: 10 },
-                  ].map((cat) => {
-                    const pts = (riskBreakdown as Record<string, number>)[cat.key] ?? 0;
+                  {BREAKDOWN_CATEGORIES.map((cat) => {
+                    const pts = Math.round(Number(riskBreakdown[cat.key]) || 0);
                     return (
                       <div key={cat.key} className="flex justify-between items-center py-1 px-2 rounded hover:bg-white/[0.02]">
                         <span className="text-[#8A90A4]">{cat.label}</span>
@@ -311,12 +329,26 @@ export default function ScanResultPanel({ result }: Props) {
                   })}
                   <div className="border-t border-white/10 pt-2 mt-2 flex justify-between font-bold text-sm">
                     <span className="text-[#E8E6DF]">TOTAL RISK SCORE</span>
-                    <span className="text-[#E05252]">{forensicRisk} / 100</span>
+                    <span className={cn(forensicRisk > 0 ? "text-[#E05252]" : "text-[#3CB697]")}>
+                      {forensicRisk} / 100
+                    </span>
                   </div>
                   <div className="flex justify-between font-bold text-sm text-[#3CB697]">
-                    <span>TRUST SCORE</span>
+                    <span>COMPOSITE TRUST SCORE</span>
                     <span>{trustScoreNum} / 100</span>
                   </div>
+                  {forensicRisk === 0 && trustScoreNum < 100 && (
+                    <div className="text-[11px] text-[#8A90A4] bg-white/[0.03] border border-white/5 rounded-lg p-2.5 space-y-1 mt-2">
+                      <p className="text-[#3CB697] font-semibold flex items-center gap-1.5">
+                        <CheckCircle2 size={13} className="flex-shrink-0" />
+                        Zero Document Manipulation (0 / 100 Risk)
+                      </p>
+                      <p className="text-[10px] text-[#8A90A4] leading-relaxed">
+                        No invisible text, zero-width Unicode, homoglyphs, or font tampering detected.
+                        The Trust Score ({trustScoreNum}/100) reflects the probabilistic AI Content signal ({Math.round(aiScore ?? 0)}%), not document fraud.
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <p className="text-[10px] text-[#8A90A4] leading-relaxed pt-2 border-t border-white/5">
                   Every risk point comes directly from verifiable forensic detections performed on the uploaded PDF. Scores are deterministic and reproducible.

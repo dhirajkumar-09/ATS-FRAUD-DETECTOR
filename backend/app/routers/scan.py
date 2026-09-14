@@ -730,7 +730,7 @@ def get_scan(
     }
 
     risk_calc = compute_risk_score(signals_out)
-    forensic_risk = scan.forensic_risk_score if scan.forensic_risk_score is not None else risk_calc["total"]
+    forensic_risk = int(round(scan.forensic_risk_score)) if scan.forensic_risk_score is not None else risk_calc["total"]
     risk_breakdown = risk_calc["breakdown"]
 
     trust_dict = {
