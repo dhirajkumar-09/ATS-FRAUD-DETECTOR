@@ -66,8 +66,12 @@ export function formatScore(score: number): string {
 }
 
 export function formatPercent(value: number): string {
+  // NOTE: ai_content_score / true_match_score from the backend are ALREADY
+  // on a 0-100 scale (see backend/app/services/*.py, which return
+  // {"score": 0-100}). Do NOT multiply by 100 here again — that caused the
+  // "3860%" display bug (38.6 * 100 = 3860).
   if (value == null || isNaN(value)) return '0%';
-  return `${Math.round(value * 100)}%`;
+  return `${Math.round(value)}%`;
 }
 
 export function formatDate(iso: string): string {
