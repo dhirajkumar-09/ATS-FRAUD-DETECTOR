@@ -22,10 +22,11 @@ class Base(DeclarativeBase):
 def init_db():
     """Ensure all tables and columns are created cleanly on startup."""
     Base.metadata.create_all(bind=engine)
-    if DATABASE_URL.startswith("sqlite"):
-        try:
-            with engine.connect() as conn:
-                from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            is_sqlite = DATABASE_URL.startswith("sqlite")
+            if is_sqlite:
                 res = conn.execute(text("PRAGMA table_info(scan_results)"))
                 existing_cols = {row[1] for row in res.fetchall()}
                 if existing_cols:
@@ -67,8 +68,29 @@ def init_db():
                             "ALTER TABLE org_settings ADD COLUMN candidate_transparency_enabled BOOLEAN DEFAULT 0"
                         ))
                     conn.commit()
-        except Exception:
-            pass
+            else:
+                # PostgreSQL migrations for Render / Production
+                postgres_alters = [
+                    "ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS trust_score FLOAT",
+                    "ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS trust_label VARCHAR(16)",
+                    "ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS share_token VARCHAR(64)",
+                    "ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS share_token_created_at TIMESTAMP",
+                    "ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS forensic_risk_score FLOAT",
+                    "ALTER TABLE fraud_signals ADD COLUMN IF NOT EXISTS risk_points INTEGER",
+                    "ALTER TABLE fraud_signals ADD COLUMN IF NOT EXISTS evidence_strength VARCHAR(16)",
+                    "ALTER TABLE fraud_signals ADD COLUMN IF NOT EXISTS confidence VARCHAR(8)",
+                    "ALTER TABLE fraud_signals ADD COLUMN IF NOT EXISTS remediation TEXT",
+                    "ALTER TABLE fraud_signals ADD COLUMN IF NOT EXISTS evidence_json TEXT",
+                    "ALTER TABLE org_settings ADD COLUMN IF NOT EXISTS candidate_transparency_enabled BOOLEAN DEFAULT FALSE",
+                ]
+                for stmt in postgres_alters:
+                    try:
+                        conn.execute(text(stmt))
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+    except Exception:
+        pass
 
 
 def get_db():

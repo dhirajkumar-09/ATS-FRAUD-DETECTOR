@@ -41,13 +41,37 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Allow the Next.js frontend (localhost:3000) during development
+# Allow cross-origin requests from Vercel, localhost, and other environments
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Tighten in production
+    allow_origins=[
+        "https://ats-fraud-detector.vercel.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_origin_regex=r"https?://.*",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error processing %s: %s", request.url.path, exc)
+    origin = request.headers.get("origin") or "*"
+    headers = {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+    }
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}"},
+        headers=headers,
+    )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth.router)
