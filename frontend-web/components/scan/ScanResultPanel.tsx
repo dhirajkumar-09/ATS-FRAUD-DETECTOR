@@ -36,6 +36,7 @@ const containerVariants: Variants = {
 
 const itemVariants: Variants = {
   hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' } },
 };
 
 const BREAKDOWN_CATEGORIES = [
@@ -630,3 +631,4 @@ export default function ScanResultPanel({ result }: Props) {
     </motion.div>
   );
 }
+
