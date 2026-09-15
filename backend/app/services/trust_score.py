@@ -114,18 +114,13 @@ def _match_component(true_match_score: float | None) -> float | None:
 
 
 def _label_for(score: float, high_count: int = 0) -> tuple[str, str, str]:
-    # Critical consistency rule: A resume with high-severity fraud signals
-    # must NEVER be labeled "Verified", and 2+ high signals must be "High Risk".
-    if high_count >= 2:
-        return "High Risk", "🔴", "--crimson"
-    if high_count == 1:
-        if score >= _CAUTION_THRESHOLD:
-            return "Caution", "🟡", "--amber"
-        return "High Risk", "🔴", "--crimson"
-
     if score >= _VERIFIED_THRESHOLD:
+        if high_count > 0:
+            return "Caution", "🟡", "--amber"
         return "Verified", "🟢", "--teal"
     if score >= _CAUTION_THRESHOLD:
+        if high_count >= 2:
+            return "High Risk", "🔴", "--crimson"
         return "Caution", "🟡", "--amber"
     return "High Risk", "🔴", "--crimson"
 
@@ -165,11 +160,17 @@ def compute_trust_score(
             + match_c     * _WEIGHT_MATCH
         )
 
-    # Consistency enforcement: cap numeric score so it agrees with label
-    if high_count >= 2:
-        score = min(score, 44.0)
-    elif high_count == 1:
-        score = min(score, 74.0)
+    if signals is not None:
+        # Explainable model: Trust Score cannot exceed the forensic ceiling (100 - forensic_risk).
+        # AI content or match issues can reduce trust, but human-written fraud
+        # never receives a score boost above its forensic baseline.
+        score = min(fraud_c, score)
+    else:
+        # Legacy fallback mode (when no signals list provided):
+        if high_count >= 2:
+            score = min(score, 44.0)
+        elif high_count == 1:
+            score = min(score, 74.0)
 
     score = round(max(0.0, min(100.0, score)), 1)
     label, emoji, color = _label_for(score, high_count=high_count)

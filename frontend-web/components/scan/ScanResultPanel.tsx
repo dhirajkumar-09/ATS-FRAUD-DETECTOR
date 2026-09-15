@@ -335,7 +335,7 @@ export default function ScanResultPanel({ result }: Props) {
                     </span>
                   </div>
                   <div className="flex justify-between font-bold text-sm text-[#3CB697]">
-                    <span>COMPOSITE TRUST SCORE</span>
+                    <span>TRUST SCORE</span>
                     <span>{trustScoreNum} / 100</span>
                   </div>
                   {forensicRisk === 0 && trustScoreNum < 100 && (
